@@ -107,7 +107,7 @@ const getEdgeColor = (sourceHandle, targetHandle, sourceNode = null, targetNode 
   if (["audioOutput"].includes(sourceHandle)) return "yellow";
 
   if (["textInput", "textInput4", "imageInput", "videoInput", "audioInput2", "concatInput", "apiInput"].includes(targetHandle)) return "blue";
-  if (["textInput2", "textInput3", "imageInput2", "imageInput3", "videoInput2", "videoInput3", "videoInput6", "audioInput3", "apiInput2", "apiInput3"].includes(targetHandle)) return "green";
+  if (["textInput2", "textInput3", "imageInput2", "imageInput3", "imageInput4", "videoInput2", "videoInput3", "videoInput6", "audioInput3", "apiInput2", "apiInput3"].includes(targetHandle)) return "green";
   if (["videoInput4", "audioInput4", "videoInput7"].includes(targetHandle)) return "orange";
   if (["audioInput", "videoInput5", "videoInput8"].includes(targetHandle)) return "yellow";
 
@@ -219,9 +219,26 @@ const processWorkflowData = (workflowData, nodeSchemas, id) => {
   };
 };
 
+const getRouteWorkflowId = (params, initialWorkflowData) => {
+  const routeId = params?.id;
+  if (typeof routeId === "string") return routeId;
+  if (Array.isArray(routeId)) return routeId[0];
+  if (routeId && typeof routeId === "object") {
+    if (typeof routeId.id === "string") return routeId.id;
+    if (typeof routeId.workflow_id === "string") return routeId.workflow_id;
+  }
+  if (initialWorkflowData?.workflow_id) return initialWorkflowData.workflow_id;
+  if (initialWorkflowData?.id) return initialWorkflowData.id;
+  if (typeof window !== "undefined") {
+    const match = window.location.pathname.match(/\/workflow\/([^/?#]+)/);
+    if (match?.[1]) return decodeURIComponent(match[1]);
+  }
+  return null;
+};
+
 const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
   const params = useParams();
-  const { id } = params;
+  const id = getRouteWorkflowId(params, initialWorkflowData);
 
   // Pre-calculate initial state if data is provided
   const initialState = useMemo(() => {
@@ -547,6 +564,10 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
           updatedFormValues.image_url = resultValue;
         }
 
+        else if (targetHandle === "imageInput4") {
+          updatedFormValues.image = resultValue;
+        }
+
         else if (targetHandle === "apiInput3") {
           updatedFormValues.image = resultValue;
         }
@@ -751,6 +772,8 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
             if (color === "green") {
               if (["textInput2", "videoInput2", "imageInput3", "audioInput3"].includes(params.targetHandle)) {
                 updatedFormValues.image_url = resultValue || null;
+              } else if (params.targetHandle === "imageInput4") {
+                updatedFormValues.image = resultValue || null;
               } else if (["textInput3", "imageInput2", "videoInput6"].includes(params.targetHandle)) {
                 const list = Array.isArray(updatedFormValues.images_list) ? [...updatedFormValues.images_list] : [];
                 if (!list.includes(resultValue) && resultValue && resultValue.trim() !== "") {
@@ -1110,7 +1133,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
           : formValues?.images_list || []; // || [node.data?.outputs?.[0]?.value] 
 
       const imageUrlConnections = connectedEdges.filter((e) =>
-        ["textInput2", "videoInput2", "imageInput3", "audioInput3", "apiInput3"].includes(e.targetHandle)
+        ["textInput2", "videoInput2", "imageInput3", "imageInput4", "audioInput3", "apiInput3"].includes(e.targetHandle)
       );
 
       const videoUrlConnections = connectedEdges.filter((e) =>
@@ -1648,7 +1671,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
           return "green";
         })(),
         textInput: "blue", textInput2: "green", textInput3: "green", textInput4: "blue", textOutput: "blue",
-        imageInput: "blue", imageInput2: "green", imageInput3: "green", imageOutput: "green",
+        imageInput: "blue", imageInput2: "green", imageInput3: "green", imageInput4: "green", imageOutput: "green",
         videoInput: "blue", videoInput2: "green", videoInput3: "green", videoInput4: "orange", videoInput5: "yellow", videoInput6: "green", videoInput7: "orange", videoInput8: "yellow", videoOutput: "orange",
         audioInput: "yellow", audioInput2: "blue", audioInput3: "green", audioInput4: "orange", audioOutput: "yellow",
       }
@@ -1694,10 +1717,12 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
         const hasImagePrompt = "prompt" in formValues;
         const hasImagesList = "images_list" in formValues;
         const hasImageImageUrl = "image_url" in formValues;
+        const hasReferenceImage = "image" in formValues;
         validHandles = [
           hasImagePrompt && "imageInput",
           hasImagesList && "imageInput2",
           hasImageImageUrl && "imageInput3",
+          hasReferenceImage && "imageInput4",
         ].filter(Boolean);
         break;
 
@@ -1800,7 +1825,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
       concatInput: "blue", concatOutput: "blue",
       apiInput: "blue", apiInput2: "green", apiInput3: "green", apiOutput: "green",
       textInput: "blue", textInput2: "green", textInput3: "green", textInput4: "blue", textOutput: "blue",
-      imageInput: "blue", imageInput2: "green", imageInput3: "green", imageOutput: "green",
+      imageInput: "blue", imageInput2: "green", imageInput3: "green", imageInput4: "green", imageOutput: "green",
       videoInput: "blue", videoInput2: "green", videoInput3: "green", videoInput4: "orange", videoInput5: "yellow", videoInput6: "green", videoInput7: "orange", videoInput8: "yellow", videoOutput: "orange",
       audioInput: "yellow", audioInput2: "blue", audioInput3: "green", audioInput4: "orange", audioOutput: "yellow",
     };
@@ -1826,7 +1851,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
     if (edgePicker.isOutput) {
       const nodeTypeToHandles = {
         textNode: ["textInput", "textInput2", "textInput3", "textInput4"],
-        imageNode: ["imageInput", "imageInput2", "imageInput3"],
+        imageNode: ["imageInput", "imageInput2", "imageInput3", "imageInput4"],
         videoNode: ["videoInput", "videoInput2", "videoInput3", "videoInput4", "videoInput5", "videoInput6", "videoInput7", "videoInput8"],
         audioNode: ["audioInput", "audioInput2", "audioInput3", "audioInput4"],
         apiNode: ["apiInput", "apiInput2", "apiInput3"],

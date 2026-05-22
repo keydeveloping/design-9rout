@@ -31,7 +31,12 @@ services:
     ports:
       - "8000:8000"
     environment:
-      MU_API_KEY: ${MU_API_KEY}
+      NINEROUTER_URL: ${NINEROUTER_URL:-http://host.docker.internal:20128}
+      NINEROUTER_KEY: ${NINEROUTER_KEY:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+      DATA_DIR: /home/appuser/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
       interval: 30s

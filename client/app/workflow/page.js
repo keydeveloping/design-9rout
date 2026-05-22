@@ -2,8 +2,10 @@ import React from "react";
 import { cookies } from "next/headers";
 import WorkflowListingClient from "./WorkflowListingClient";
 
+const apiBaseUrl = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
 async function getWorkflowDefs(cookieHeader) {
-  const endpoint = `http://127.0.0.1:8000/api/workflow/get-workflow-defs`;
+  const endpoint = `${apiBaseUrl}/api/workflow/get-workflow-defs`;
   try {
     const res = await fetch(endpoint, {
       cache: 'no-store',

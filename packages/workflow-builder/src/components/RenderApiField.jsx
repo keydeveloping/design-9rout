@@ -80,39 +80,29 @@ const RenderApiField = ({ fieldName, meta, idx, formValues, setFormValues, handl
     };
 
     setUploading(true);
-    axios.get("/api/app/get_file_upload_url", {
-      params: { filename: file.name }
+    const formData = new FormData();
+    formData.append("file", file);
+    axios.post("/api/app/upload-file", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+      onUploadProgress: (progressEvent) => {
+        const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+        setUploadProgress(percentCompleted);
+      }
     })
     .then((response) => {
-      const { url, fields } = response.data;
+      const uploadedUrl = response.data.url;
+      setFormValues((prev) => {
+        const current = prev[field];
+        const updatedValue = fieldSchema.type === 'array'
+          ? [...(current || []), uploadedUrl]
+          : uploadedUrl
 
-      const formData = new FormData();
-      Object.entries(fields).forEach(([key, value]) => {
-        formData.append(key, value);
+          return { ...prev, [field]: updatedValue };
       });
-      formData.append("file", file);
-      axios.post(url, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-        onUploadProgress: (progressEvent) => {
-          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          setUploadProgress(percentCompleted);
-        }
-      })
-      .then(() => {
-        const uploadedUrl = `https://cdn.muapi.ai/${fields.key}`;
-        setFormValues((prev) => { 
-          const current = prev[field];
-          const updatedValue = fieldSchema.type === 'array'
-            ? [...(current || []), uploadedUrl]
-            : uploadedUrl
-
-            return { ...prev, [field]: updatedValue };
-        });
-        setTimeout(() => {
-          setUploading(false);
-          setUploadProgress(0);
-        }, 500);
-      })
+      setTimeout(() => {
+        setUploading(false);
+        setUploadProgress(0);
+      }, 500);
     })
     .catch((error) => {
       console.error("Upload failed", error);

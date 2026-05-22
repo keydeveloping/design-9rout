@@ -17,6 +17,7 @@ const inputHandles = [
   "textInput2",
   "textInput3",
   "textInput4",
+  "textInput5",
 ];
 
 const outputHandles = [
@@ -201,7 +202,7 @@ const TextGeneration = ({ id, data, selected }) => {
         )?.[1];
 
         if (!nodeData || nodeData.length === 0) return;
-        const latest = nodeData[nodeData.length - 1];
+        const latest = nodeData[0];
         if (latest.status === "succeeded" || latest.status === "completed") {
           const output = latest.result.outputs;
           const val = output[0]?.value || "";
@@ -243,13 +244,8 @@ const TextGeneration = ({ id, data, selected }) => {
   };
 
   const handleRunSingleNode = async () => {
-    if (!runId) {
-      toast.error("No run_id available!. Click 'Run All' button");
-      return;
-    }
-
     try {
-      data.onDataChange(id, { isLoading: true });
+      data.onDataChange(id, { isLoading: true, errorMsg: null });
       const workflow_id = await data.handleSaveWorkFlow();
 
       if (!workflow_id) {
@@ -276,12 +272,13 @@ const TextGeneration = ({ id, data, selected }) => {
       }
 
       const response = await axios.post(`/api/workflow/${workflow_id}/node/${id}/run`, {
-        run_id: runId,
+        run_id: runId || undefined,
         model: selectedModel.id,
         params: params,
         cost: generationCost,
         node_id: "AI Text"
       });
+      data.onDataChange(id, { runId: response.data.run_id });
       pollNodeStatus(response.data.run_id);
     } catch(error) {
       data.onDataChange(id, { isLoading: false });
@@ -302,6 +299,7 @@ const TextGeneration = ({ id, data, selected }) => {
   const hasImagesList = properties && "images_list" in properties && !data.selectedModel?.id?.includes("passthrough");
   const hasImageUrl = properties && "image_url" in properties && !data.selectedModel?.id?.includes("passthrough");
   const hasSystemPrompt = properties && "system_prompt" in properties && !data.selectedModel?.id?.includes("passthrough");
+  const hasAudioUrl = properties && "audio_url" in properties && !data.selectedModel?.id?.includes("passthrough");
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -310,6 +308,7 @@ const TextGeneration = ({ id, data, selected }) => {
         hasImageUrl && "textInput2",
         hasImagesList && "textInput3",
         hasSystemPrompt && "textInput4",
+        hasAudioUrl && "textInput5",
       ].filter(Boolean);
 
       setEdges((prevEdges) =>
@@ -320,7 +319,7 @@ const TextGeneration = ({ id, data, selected }) => {
       );
       }, 2000);
     return () => clearTimeout(timeout);
-  }, [hasPrompt, hasImageUrl, hasImagesList, hasSystemPrompt, id, setEdges]);
+  }, [hasPrompt, hasImageUrl, hasImagesList, hasSystemPrompt, hasAudioUrl, id, setEdges]);
 
   useEffect(() => {
     const connectedInputs = {};
@@ -706,19 +705,52 @@ const TextGeneration = ({ id, data, selected }) => {
         data-type="blue"
       />
       {hasSystemPrompt && (
-        <p 
+        <p
           className={`absolute -left-14 top-[250px] text-[10px] font-bold tracking-tight text-blue-600 transition-all duration-300 ${
-            data.activeHandleColor === "blue" 
-              ? "opacity-100 translate-x-0" 
+            data.activeHandleColor === "blue"
+              ? "opacity-100 translate-x-0"
               : "opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0"
           }`}
-        > 
-          SYSTEM 
+        >
+          SYSTEM
         </p>
       )}
 
-      <Handle 
-        type="source" 
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="textInput5"
+        style={{
+          top: 300,
+          width: 14,
+          height: 14,
+          opacity: hasAudioUrl ? 1 : 0,
+          pointerEvents: hasAudioUrl ? 'auto' : 'none',
+          transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+        }}
+        className={`
+          !rounded-full !border-[3px] !left-[-8px] transition-all
+          ${connectedInputs.textInput5
+            ? '!bg-yellow-500 !border-zinc-900 shadow-[0_0_15px_rgba(234,179,8,0.8)]'
+            : '!bg-zinc-900 !border-yellow-500/50 hover:!border-yellow-500 shadow-sm'
+          }
+        `}
+        data-type="yellow"
+      />
+      {hasAudioUrl && (
+        <p
+          className={`absolute -left-11 top-[300px] text-[10px] font-bold tracking-tight text-yellow-500 transition-all duration-300 ${
+            data.activeHandleColor === "yellow"
+              ? "opacity-100 translate-x-0"
+              : "opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0"
+          }`}
+        >
+          AUDIO
+        </p>
+      )}
+
+      <Handle
+        type="source"
         position={Position.Right} 
         id="textOutput" 
         style={{ 

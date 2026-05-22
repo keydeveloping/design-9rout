@@ -48,41 +48,29 @@ const UploadNode = ({ id, data, formValues, setFormValues, selectedModel, loadin
     };
 
     setUploading(true);
-    axios.get("/api/app/get_file_upload_url", {
-      params: { filename: file.name }
+    const formData = new FormData();
+    formData.append("file", file);
+    axios.post("/api/app/upload-file", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+      onUploadProgress: (progressEvent) => {
+        const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+        setUploadProgress(percentCompleted);
+      }
     })
     .then((response) => {
-      const { url, fields } = response.data;
+      setFormValues(prev => ({ ...prev, [type]: response.data.url }));
 
-      const formData = new FormData();
-      Object.entries(fields).forEach(([key, value]) => {
-        formData.append(key, value);
-      });
-      formData.append("file", file);
-      axios.post(url, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-        onUploadProgress: (progressEvent) => {
-          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          setUploadProgress(percentCompleted);
-        }
-      })
-      .then(() => {
-        const prefix = "https://cdn.muapi.ai/";
-        const uploadedUrl = prefix + fields.key;
-        setFormValues(prev => ({ ...prev, [type]: uploadedUrl }));
-
-        setTimeout(() => {
-          setUploading(false);
-          setUploadProgress(0);
-        }, 500);
-      })
+      setTimeout(() => {
+        setUploading(false);
+        setUploadProgress(0);
+      }, 500);
     })
     .catch((error) => {
       console.error("Upload failed", error);
       toast.error("Upload failed.", error?.response?.data);
       setUploading(false);
       setUploadProgress(0);
-    })  
+    })
   };
 
   const handleDragOver = (e) => {
@@ -113,60 +101,31 @@ const UploadNode = ({ id, data, formValues, setFormValues, selectedModel, loadin
     let resultUrl;
 
     if (acceptType === "image") {
-      outputs = [{ 
-        type: "image_url", 
-        value: formValues.image_url ? formValues.image_url: null,
+      outputs = [{
+        type: "image_url",
+        value: formValues.image_url ? formValues.image_url : null,
       }];
-      resultUrl = formValues.image_url ? formValues.image_url: null;
+      resultUrl = formValues.image_url ? formValues.image_url : null;
     } else if (acceptType === "video") {
-      outputs = [{ 
-        type: "video_url", 
-        value: formValues.video_url ? formValues.video_url: null,
+      outputs = [{
+        type: "video_url",
+        value: formValues.video_url ? formValues.video_url : null,
       }];
-      resultUrl = formValues.video_url ? formValues.video_url: null;
+      resultUrl = formValues.video_url ? formValues.video_url : null;
     } else if (acceptType === "audio") {
-      outputs = [{ 
-        type: "audio_url", 
-        value: formValues.audio_url ? formValues.audio_url: null,
+      outputs = [{
+        type: "audio_url",
+        value: formValues.audio_url ? formValues.audio_url : null,
       }];
-      resultUrl = formValues.audio_url ? formValues.audio_url: null;
+      resultUrl = formValues.audio_url ? formValues.audio_url : null;
     } else {
-      outputs = [{ 
-        type: "text", 
-        value: formValues.prompt ? formValues.prompt: "",
+      outputs = [{
+        type: "text",
+        value: formValues.prompt ? formValues.prompt : "",
       }];
-      resultUrl = formValues.prompt ? formValues.prompt: "";
-    };
-
-    if (acceptType === "image" && resultUrl) {
-      const img = new Image();
-      img.onload = () => {
-        setImageMetadata(prev => ({ 
-          ...prev, 
-          width: img.naturalWidth, 
-          height: img.naturalHeight 
-        }));
-      };
-      img.src = resultUrl;
-      
-      fetch(resultUrl, { method: 'HEAD' })
-        .then(res => {
-          const size = res.headers.get('content-length');
-          if (size) {
-            const sizeInMB = (parseInt(size) / (1024 * 1024)).toFixed(2);
-            setImageMetadata(prev => ({ ...prev, size: sizeInMB + ' MB' }));
-          } else {
-            setImageMetadata(prev => ({ ...prev, size: null }));
-          }
-        })
-        .catch(() => {
-          setImageMetadata(prev => ({ ...prev, size: null }));
-        });
-    } else if (acceptType === "image") {
-      setImageMetadata({ width: 0, height: 0, size: null });
+      resultUrl = formValues.prompt ? formValues.prompt : "";
     }
-    
-    // if (!data.formValues) return;
+
     const incoming = JSON.stringify(prevFormValues.current);
     const current = JSON.stringify(formValues);
     if (incoming === current) return;
@@ -182,6 +141,35 @@ const UploadNode = ({ id, data, formValues, setFormValues, selectedModel, loadin
       });
     }
   }, [formValues, selectedModel, loading, id, data, acceptType]);
+
+  useEffect(() => {
+    const resultUrl = formValues?.image_url;
+    if (acceptType !== "image") return;
+    if (!resultUrl) {
+      setImageMetadata({ width: 0, height: 0, size: null });
+      return;
+    }
+
+    let cancelled = false;
+    const img = new Image();
+    img.onload = () => {
+      if (cancelled) return;
+      setImageMetadata({
+        width: img.naturalWidth,
+        height: img.naturalHeight,
+        size: null,
+      });
+    };
+    img.onerror = () => {
+      if (cancelled) return;
+      setImageMetadata({ width: 0, height: 0, size: null });
+    };
+    img.src = resultUrl;
+
+    return () => {
+      cancelled = true;
+    };
+  }, [acceptType, formValues?.image_url]);
 
   const hasFileUrl = formValues?.image_url || formValues?.video_url || formValues?.audio_url;
   const textareaRef = useRef(null);

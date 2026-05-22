@@ -17,7 +17,8 @@ import { useGenerationCost } from "./useGenerationCost";
 const inputHandles = [
   "imageInput",
   "imageInput2",
-  "imageInput3"
+  "imageInput3",
+  "imageInput4"
 ];
 
 const outputHandles = [
@@ -197,11 +198,11 @@ const ImageGeneration = ({ id, data, selected }) => {
       axios.get(`/api/workflow/run/${run_id}/status`)
       .then((response) => {
         const nodesInRes = response.data.nodes || {};
-        const nodeData = nodesInRes[id] || Object.entries(nodesInRes).find(([key]) => 
+        const nodeData = nodesInRes[id] || Object.entries(nodesInRes).find(([key]) =>
           key.toLowerCase().replace(/\s+/g, '') === id.toLowerCase().replace(/\s+/g, '')
         )?.[1];
         if (!nodeData || nodeData.length === 0) return;
-        const latest = nodeData[nodeData.length - 1];
+        const latest = nodeData[0];
         if (latest.status === "succeeded" || latest.status === "completed") {
           const output = latest.result.outputs;
           const val = output[0]?.value || "";
@@ -243,12 +244,8 @@ const ImageGeneration = ({ id, data, selected }) => {
   };
 
   const handleRunSingleNode = async () => {
-    if (!runId) {
-      toast.error("No run_id available!. Click 'Run All' button");
-      return;
-    }
     try {
-      data.onDataChange(id, { isLoading: true });
+      data.onDataChange(id, { isLoading: true, errorMsg: null });
       const workflow_id = await data.handleSaveWorkFlow();
 
       if (!workflow_id) {
@@ -275,12 +272,13 @@ const ImageGeneration = ({ id, data, selected }) => {
       }
 
       const response = await axios.post(`/api/workflow/${workflow_id}/node/${id}/run`, {
-        run_id: runId,
+        run_id: runId || undefined,
         model: selectedModel.id,
         params: params,
         cost: generationCost,
         node_id: "AI Image"
       });
+      data.onDataChange(id, { runId: response.data.run_id });
       pollNodeStatus(response.data.run_id);
     } catch(error) {
       data.onDataChange(id, { isLoading: false });
@@ -300,12 +298,14 @@ const ImageGeneration = ({ id, data, selected }) => {
   const hasPrompt = properties && "prompt" in properties && !data.selectedModel?.id.includes("passthrough");
   const hasImagesList = properties && "images_list" in properties && !data.selectedModel?.id.includes("passthrough");
   const hasImageUrl = properties && "image_url" in properties && !data.selectedModel?.id.includes("passthrough");
+  const hasReferenceImage = properties && "image" in properties && !data.selectedModel?.id.includes("passthrough");
 
   useEffect(() => {
     const timeout = setTimeout(() => {
       const validHandles = [
         hasPrompt && "imageInput",
         hasImageUrl && "imageInput3",
+        hasReferenceImage && "imageInput4",
         hasImagesList && "imageInput2",
       ].filter(Boolean);
 
@@ -317,7 +317,7 @@ const ImageGeneration = ({ id, data, selected }) => {
       );
     }, 2000);
     return () => clearTimeout(timeout);
-  }, [hasPrompt, hasImageUrl, hasImagesList, id, setEdges]);
+  }, [hasPrompt, hasImageUrl, hasReferenceImage, hasImagesList, id, setEdges]);
 
   useEffect(() => {
     const connectedInputs = {};
@@ -407,33 +407,30 @@ const ImageGeneration = ({ id, data, selected }) => {
     : data.resultUrl;
 
   useEffect(() => {
-    if (currentOutput) {
-      const img = new Image();
-      img.onload = () => {
-        setImageMetadata(prev => ({ 
-          ...prev, 
-          width: img.naturalWidth, 
-          height: img.naturalHeight 
-        }));
-      };
-      img.src = currentOutput;
-      
-      fetch(currentOutput, { method: 'HEAD' })
-        .then(res => {
-          const size = res.headers.get('content-length');
-          if (size) {
-            const sizeInMB = (parseInt(size) / (1024 * 1024)).toFixed(2);
-            setImageMetadata(prev => ({ ...prev, size: sizeInMB + ' MB' }));
-          } else {
-            setImageMetadata(prev => ({ ...prev, size: null }));
-          }
-        })
-        .catch(() => {
-          setImageMetadata(prev => ({ ...prev, size: null }));
-        });
-    } else {
+    if (!currentOutput) {
       setImageMetadata({ width: 0, height: 0, size: null });
+      return;
     }
+
+    let cancelled = false;
+    const img = new Image();
+    img.onload = () => {
+      if (cancelled) return;
+      setImageMetadata({
+        width: img.naturalWidth,
+        height: img.naturalHeight,
+        size: null,
+      });
+    };
+    img.onerror = () => {
+      if (cancelled) return;
+      setImageMetadata({ width: 0, height: 0, size: null });
+    };
+    img.src = currentOutput;
+
+    return () => {
+      cancelled = true;
+    };
   }, [currentOutput]);
 
   const updateWorkflowThumbnail = async (thumbnail) => {
@@ -732,17 +729,48 @@ const ImageGeneration = ({ id, data, selected }) => {
         data-type="green"
       />
       {hasImageUrl && (
-        <p 
+        <p
           className={`absolute -left-10 top-[200px] text-xs text-green-500 transition-opacity duration-200 ${
             data.activeHandleColor === "green"
-              ? "opacity-100" 
+              ? "opacity-100"
               : "opacity-0 group-hover:opacity-100"
           }`}
-        > 
-          Image 
+        >
+          Image
         </p>
-      )}   
-      <Handle 
+      )}
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="imageInput4"
+        style={{
+          top: 250,
+          opacity: hasReferenceImage ? 1 : 0,
+          pointerEvents: hasReferenceImage ? 'auto' : 'none',
+          width: 12,
+          height: 12,
+          transition: 'all 0.2s ease-in-out',
+        }}
+        className={`!rounded-full !border-[3px] !left-[-8px] transition-all
+          ${connectedInputs.imageInput4
+            ? '!bg-emerald-600 !border-zinc-900 shadow-[0_0_15px_rgba(16,185,129,0.8)]'
+            : '!bg-zinc-900 !border-emerald-600/50 hover:!border-emerald-600 shadow-sm'
+          }
+        `}
+        data-type="green"
+      />
+      {hasReferenceImage && (
+        <p
+          className={`absolute -left-18 top-[250px] text-xs text-green-500 transition-opacity duration-200 ${
+            data.activeHandleColor === "green"
+              ? "opacity-100"
+              : "opacity-0 group-hover:opacity-100"
+          }`}
+        >
+          Ref Img
+        </p>
+      )}
+      <Handle
         type="source" 
         position={Position.Right} 
         id="imageOutput" 

@@ -206,7 +206,7 @@ const AudioGeneration = ({ id, data, selected }) => {
         )?.[1];
 
         if (!nodeData || nodeData.length === 0) return;
-        const latest = nodeData[nodeData.length - 1];
+        const latest = nodeData[0];
         if (latest.status === "succeeded" || latest.status === "completed") {
           const output = latest.result.outputs;
           const val = output[0]?.value || "";
@@ -247,13 +247,8 @@ const AudioGeneration = ({ id, data, selected }) => {
   };
 
   const handleRunSingleNode = async () => {
-    if (!runId) {
-      toast.error("No run_id available!. Click 'Run All' button");
-      return;
-    };
-
     try {
-      data.onDataChange(id, { isLoading: true });
+      data.onDataChange(id, { isLoading: true, errorMsg: null });
       const workflow_id = await data.handleSaveWorkFlow();
 
       if (!workflow_id) {
@@ -280,12 +275,13 @@ const AudioGeneration = ({ id, data, selected }) => {
       }
 
       const response = await axios.post(`/api/workflow/${workflow_id}/node/${id}/run`, {
-        run_id: runId,
+        run_id: runId || undefined,
         model: selectedModel.id,
         params: params,
         cost: generationCost,
         node_id: "AI Audio"
       });
+      data.onDataChange(id, { runId: response.data.run_id });
       pollNodeStatus(response.data.run_id);
     } catch(error) {
       data.onDataChange(id, { isLoading: false });

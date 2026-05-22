@@ -20,6 +20,9 @@ RUN groupadd --system --gid 1001 appgroup && \
 
 COPY --from=builder /root/.local /home/appuser/.local
 ENV PATH=/home/appuser/.local/bin:$PATH
+ENV DATA_DIR=/home/appuser/data
+
+RUN mkdir -p /home/appuser/data && chown -R appuser:appgroup /home/appuser
 
 COPY --chown=appuser:appgroup app ./app
 
