@@ -1,231 +1,211 @@
-# Vibe Workflow — Open-Source Alternative to Weavy AI, Freepik Spaces, Krea Nodes & FloraFauna AI
+# Vibe Workflow
 
-**Vibe Workflow** is a free, open-source node-based AI workflow builder — the self-hostable alternative to Weavy AI, Freepik Spaces, Krea Nodes, and FloraFauna AI. Designed around "Artistic Intelligence," it gives creators and developers a visual, modular pipeline editor for designing, editing, and composing AI-generated images and video — with no vendor lock-in. Read the full story: [I built Open Weavy because paid AI creative tools were getting ridiculously expensive](https://medium.com/@anilmatcha/i-built-open-weavy-because-paid-ai-creative-tools-were-getting-ridiculously-expensive-f67b088e06fb).
+Open-source node-based AI workflow builder for image, video, audio, and text pipelines.
 
-> 🚀 **Prefer a hosted version?** Try Vibe Workflow instantly at **[muapi.ai/workflow](https://muapi.ai/workflow)** — fully managed, with **API** and **embed** support to plug node-based AI workflows directly into your own platform. See [Hosted Version](#hosted-version) below.
+Project sekarang berjalan sebagai monorepo dengan:
+- `client/` — Next.js app
+- `packages/workflow-builder/` — shared workflow editor library
+- `server/` — FastAPI backend
 
-<img width="1024" height="1024" alt="Vibe Workflow — open-source AI workflow builder alternative to Weavy AI, Krea Nodes, Freepik Spaces, FloraFauna AI" src="https://github.com/user-attachments/assets/f603eb13-3b4f-4c9a-9a6a-c4cc3a94f7a6" />
+## Current Stack
 
-> **Looking for a Weavy AI alternative? A Krea Nodes alternative? A Freepik Spaces alternative? A FloraFauna AI alternative?**
-> Vibe Workflow is fully open-source, self-hostable, and free — with the same node-based visual editor you know and love.
-
----
-
-## Sample Workflow UI
-
-<img width="1468" height="764" alt="Screenshot 2026-04-01 at 4 03 29 PM" src="https://github.com/user-attachments/assets/0eeff00f-7850-4d53-bbc9-68f6b1f8b7a4" />
-
-
----
-
-## Hosted Version
-
-Don't want to self-host? A fully managed, hosted version of Vibe Workflow is available at **[muapi.ai/workflow](https://muapi.ai/workflow)** — zero setup, ready to use in the browser.
-
-The hosted version also ships with:
-- **API support** — programmatically run workflows and integrate generative pipelines into your own apps and backends.
-- **Embed support** — drop the workflow builder directly into your own platform or product via an embeddable widget, so your users get a node-based AI editor without leaving your UI.
-
-Use the hosted version if you want to skip infra and add node-based AI workflows to your own platform in minutes.
-
----
-
-## Why Vibe Workflow Over Weavy AI / Krea Nodes / Freepik Spaces / FloraFauna AI?
-
-| Feature | Vibe Workflow | Weavy AI | Krea Nodes | Freepik Spaces | FloraFauna AI |
-|---|---|---|---|---|---|
-| Open Source | ✅ MIT | ❌ | ❌ | ❌ | ❌ |
-| Self-Hostable | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Node-Based Editor | ✅ | ✅ | ✅ | Partial | ✅ |
-| Custom AI Models | ✅ | Limited | Limited | ❌ | Limited |
-| No Subscription | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Extendable / API | ✅ | Limited | Limited | ❌ | Limited |
-
-Paid AI creative tools have become [ridiculously expensive](https://medium.com/@anilmatcha/i-built-open-weavy-because-paid-ai-creative-tools-were-getting-ridiculously-expensive-f67b088e06fb). Vibe Workflow bridges the gap between complex generative AI capabilities and intuitive visual design. Where tools like Weavy AI and Krea Nodes offer powerful node-based systems behind paywalls, Vibe Workflow gives you the same power — open-source, flexible, and extendable:
-
-- **Creative Professionals**: Build custom AI pipelines for high-volume asset production.
-- **Studios**: Maintain brand consistency across hundreds of generative variations.
-- **Developers**: Extend and integrate generative AI into any existing workflow via API.
-- **Researchers**: Self-host and experiment with any AI model stack — no usage caps.
-
----
-
-## Features
-
-- **Node-Based AI Workflow Editor** — Visual, modular pipelines for generative AI, similar in spirit to Krea Nodes and Weavy AI workflows but fully open-source (inspired by Blender Nodes and ComfyUI).
-- **Artistic Intelligence** — A design philosophy bridging human creativity and AI automation; the same creative-first approach seen in FloraFauna AI and Freepik Spaces.
-- **Generative Image & Video** — Integrated support for image and video generation powered by **MuAPI** (Vadoo AI).
-- **Self-Hosted & Private** — Run entirely on your own infrastructure. No data sent to third-party SaaS platforms.
-- **Extensible Architecture** — Add new AI model nodes, connect external APIs, and build reusable workflow templates.
-- **No Vendor Lock-in** — Swap AI providers freely. Unlike Freepik Spaces or FloraFauna AI, you own your stack.
-
----
-
-## Use Cases
-
-- **AI Image Generation Pipelines** — Build workflows comparable to Freepik Spaces AI tools or FloraFauna AI canvas, on your own server.
-- **Video Generation Workflows** — Sequence and automate video generation jobs just like Krea Workflows.
-- **Brand Asset Automation** — Replicate what Weavy AI does for enterprise content production, without the SaaS subscription.
-- **Custom Model Integration** — Connect LoRAs, custom diffusion models, or any external API as a workflow node.
-- **Creative Exploration** — Experiment with generative art pipelines in the same visual style as Krea Nodes or FloraFauna's node canvas.
-
----
+- Frontend: Next.js 16 + React 19
+- Workflow UI: React Flow
+- Backend: FastAPI + Uvicorn
+- AI runtime: 9router-compatible API via `NINEROUTER_URL`
+- Packaging: npm workspaces
+- Container runtime: Docker Compose
 
 ## Project Structure
 
 ```text
-Vibe-Workflow/
-├── client/              # Next.js frontend application
+.
+├── client/
 ├── packages/
-│   └── workflow-builder/ # Shared UI library — the core node editor
-└── server/              # FastAPI backend
+│   └── workflow-builder/
+├── server/
+├── docker-compose.yml
+├── .env.example
+└── package.json
 ```
 
----
+## Requirements
 
-## Getting Started
+Local development:
+- Node.js 20+
+- npm 7+
+- Python 3.10+
+- Running 9router endpoint
 
-### Prerequisites
+Docker:
+- Docker
+- Docker Compose v2
+- Running 9router endpoint reachable from container
 
-For local development:
-- **Node.js** (v20+)
-- **Python** (v3.10+)
-- **npm** (v7+ for workspaces support)
+## Environment Variables
 
-Or use **Docker** (see [Running with Docker](#running-with-docker)).
+### Root `.env` for Docker Compose
 
-### Installation
+Copy:
 
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/samuraigpt/vibe-workflow.git
-   cd vibe-workflow
-   ```
-
-2. **Install all dependencies** (root directory):
-   ```bash
-   npm install
-   ```
-   This installs dependencies for the client, the workflow-builder library, and links them via npm workspaces.
-
-### Configuration
-
-Vibe Workflow uses **MuAPI** (Vadoo AI) for generative AI capabilities. You need an API key.
-
-1. **Get your API Key** from [muapi.ai](https://muapi.ai) — sign up, navigate to **API Keys**, generate a key.
-
-2. **Configure the Backend**:
-   ```bash
-   cd server
-   cp .env.example .env
-   # Open .env and set:
-   # MU_API_KEY=your_actual_api_key_here
-   ```
-
-### Running the Project
-
-**Frontend (Next.js):**
 ```bash
-npm run dev:app
-# Available at http://localhost:3000
+cp .env.example .env
 ```
 
-**Backend (FastAPI):**
+Current variables:
+
+```env
+NINEROUTER_URL=http://host.docker.internal:20128
+NINEROUTER_KEY=your_9router_key_here
+PUBLIC_BASE_URL=http://localhost:8000
+ALLOW_LOCAL_REFERENCE_IMAGES=true
+```
+
+Meaning:
+- `NINEROUTER_URL` — base URL for 9router runtime
+- `NINEROUTER_KEY` — auth key for 9router if needed
+- `PUBLIC_BASE_URL` — public/backend base URL used when generated files are returned
+- `ALLOW_LOCAL_REFERENCE_IMAGES` — allow local/private image URLs for local dev
+
+### Backend `server/.env`
+
+Copy:
+
+```bash
+cd server
+cp .env.example .env
+```
+
+Current variables:
+
+```env
+NINEROUTER_URL=http://localhost:20128
+NINEROUTER_KEY=your_9router_key_here
+PUBLIC_BASE_URL=http://127.0.0.1:8000
+ALLOW_LOCAL_REFERENCE_IMAGES=true
+```
+
+## Install Dependencies
+
+From repo root:
+
+```bash
+npm install
+```
+
+This installs workspace dependencies for:
+- `client`
+- `packages/workflow-builder`
+- `server`-adjacent JS tooling if present
+
+## Run Locally
+
+### 1. Start backend
+
 ```bash
 cd server
 python -m venv venv
-source venv/bin/activate   # Windows: venv\Scripts\activate
+source venv/bin/activate
+# Windows: venv\Scripts\activate
 pip install -r requirements.txt
-
-# Run the server
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
----
+Backend default URL:
+- `http://localhost:8000`
 
-## Running with Docker
+Health endpoint:
+- `http://localhost:8000/api/health`
 
-The easiest way to run Vibe Workflow is with Docker Compose.
+### 2. Start frontend
 
-### Prerequisites
+From repo root:
 
-- **Docker** (v20+)
-- **Docker Compose** (v2+)
+```bash
+npm run dev:app
+```
 
-### Quick Start
+Frontend default URL:
+- `http://localhost:3000`
 
-1. **Configure environment**:
-   ```bash
-   cp .env.example .env
-   ```
-   Edit `.env` and add your MuAPI key:
-   ```bash
-   MU_API_KEY=your_actual_api_key_here
-   ```
+### 3. Rebuild workflow builder library after UI changes
 
-2. **Start all services**:
-   ```bash
-   docker compose up --build
-   ```
+If you edit files under `packages/workflow-builder`, rebuild the shared library:
 
-3. **Access the application**:
-   - Frontend: [http://localhost:3000](http://localhost:3000)
-   - Backend API: [http://localhost:8000](http://localhost:8000)
-   - API Docs: [http://localhost:8000/docs](http://localhost:8000/docs)
+```bash
+npm run build:lib
+```
 
-### Services
+## Run With Docker
 
-| Service | Image | Port |
-|---------|-------|------|
-| client | Node.js 24 Alpine | 3000 |
-| server | Python 3.13 | 8000 |
+### 1. Configure env
 
-### Stopping
+From repo root:
+
+```bash
+cp .env.example .env
+```
+
+Update at least:
+- `NINEROUTER_URL`
+- `NINEROUTER_KEY`
+
+### 2. Start services
+
+```bash
+docker compose up --build
+```
+
+Available services:
+- Frontend: `http://localhost:3000`
+- Backend: `http://localhost:8000`
+- API docs: `http://localhost:8000/docs`
+
+### 3. Stop services
 
 ```bash
 docker compose down
 ```
 
----
+## Current Docker Services
 
-## Development
+| Service | Port | Notes |
+|---|---:|---|
+| `client` | 3000 | Next.js production container |
+| `server` | 8000 | FastAPI container |
 
-- **Workflow-Builder Library** — To rebuild the core node editor:
-  ```bash
-  npm run build:lib
-  ```
-- **Client App** — Uses the local library. Rebuild the library after changes if not using a watcher:
-  ```bash
-  npm run dev:app
-  ```
+Backend container uses:
+- `DATA_DIR=/home/appuser/data`
+- `PUBLIC_BASE_URL` from compose env
+- `host.docker.internal` mapping for local 9router access
 
----
+## Notes About 9router
 
-## Comparisons
+This project no longer uses MuAPI env setup described in older docs. Current runtime depends on:
+- `NINEROUTER_URL`
+- `NINEROUTER_KEY`
 
-### Vibe Workflow vs Weavy AI
-Weavy AI is a proprietary node-based creative AI platform. Vibe Workflow is its open-source equivalent — same visual workflow paradigm, fully self-hostable, MIT licensed, with no subscription fees.
+If reference-image workflows fail with public-host errors:
+- set correct `PUBLIC_BASE_URL`
+- or keep `ALLOW_LOCAL_REFERENCE_IMAGES=true` for local-only development
 
-### Vibe Workflow vs Krea Nodes / Krea Workflows
-Krea Nodes offers a powerful real-time generative canvas. Vibe Workflow brings a comparable node-based editor that is open-source, customizable, and extendable with any AI backend.
+## Useful Commands
 
-### Vibe Workflow vs Freepik Spaces
-Freepik Spaces is a cloud-based AI creative suite integrated with Freepik's asset library. Vibe Workflow provides the workflow and pipeline layer as open-source infrastructure you control, with no asset-library lock-in.
+From repo root:
 
-### Vibe Workflow vs FloraFauna AI
-FloraFauna AI offers a creative node canvas for generative media. Vibe Workflow replicates and extends that concept in an open-source, self-hosted package with full extensibility.
+```bash
+npm run dev:app
+npm run build:app
+npm run build:lib
+npm run install:all
+```
 
----
+## Development Notes
 
-## Keywords / Tags
-
-`weavy-ai-alternative` · `krea-nodes-alternative` · `freepik-spaces-alternative` · `florafauna-ai-alternative` · `open-source-ai-workflow` · `node-based-ai-editor` · `generative-ai-pipeline` · `comfyui-alternative` · `visual-ai-workflow` · `self-hosted-ai` · `ai-image-generation` · `ai-video-generation` · `no-code-ai` · `artistic-intelligence`
-
----
-
-## Contributing
-
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+- Workflow editor code lives in `packages/workflow-builder/src/components`
+- After workflow-builder edits, rebuild library with `npm run build:lib`
+- Backend stores runtime/generated data under `DATA_DIR`
+- Do not commit `server/data/`
 
 ## License
 
