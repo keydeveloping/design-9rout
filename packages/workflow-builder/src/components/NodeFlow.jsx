@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import ReactFlow, {
   addEdge,
   Background,
+  ConnectionLineType,
   Controls,
   MiniMap,
   Panel,
@@ -32,6 +33,8 @@ import { apiNodeModels, audioModels, concatModels, imageModels, textModels, vide
 import Link from "next/link";
 import RenderField from "./RenderField";
 import PromptConcate from "./PromptConcate";
+import ArraySeparator from "./ArraySeparator";
+import ListNode from "./ListNode";
 import { TbArrowMerge } from "react-icons/tb";
 import { RiInputMethodLine } from "react-icons/ri";
 import ApiNode from "./ApiNode";
@@ -49,6 +52,8 @@ const nodeTypes = {
   videoNode: VideoGeneration,
   audioNode: AudioGeneration,
   concatNode: PromptConcate,
+  arraySeparatorNode: ArraySeparator,
+  listNode: ListNode,
   vidConcatNode: VideoCombiner,
   apiNode: ApiNode
 }
@@ -90,6 +95,113 @@ const edgeStyles = {
   }
 };
 
+const defaultEdgeOptions = {
+  type: "default",
+};
+
+const withDefaultEdgeOptions = (edge) => ({
+  ...defaultEdgeOptions,
+  ...edge,
+});
+
+const buildStyledEdge = (edge, color) => withDefaultEdgeOptions({
+  ...edge,
+  style: edgeStyles[color],
+});
+
+const restoreBuilderEdge = (edge, color) => buildStyledEdge({
+  id: edge.id || `${edge.source}-${edge.target}`,
+  source: edge.source,
+  target: edge.target,
+  sourceHandle: edge.sourceHandle || null,
+  targetHandle: edge.targetHandle || null,
+}, color);
+
+const restoreBuilderEdges = (edges = [], resolver) => edges.map(resolver);
+
+const createBuilderEdge = (params, color, edges) => addEdge(buildStyledEdge(params, color), edges);
+
+const getBuilderDefaultEdges = (edges = []) => edges.map(withDefaultEdgeOptions);
+
+const builderConnectionLineStyle = (color) => ({
+  stroke: edgeStyles[color]?.stroke || '#ffffff',
+  strokeWidth: edgeStyles[color]?.strokeWidth || 2,
+});
+
+const builderDefaultEdgeOptions = defaultEdgeOptions;
+const builderConnectionLineType = ConnectionLineType.Bezier;
+
+const isImageReferenceHandle = (handle) => handle === "imageInput2" || handle?.startsWith("imageInputRef-");
+
+const getImageReferenceIndex = (handle) => {
+  if (!handle?.startsWith("imageInputRef-")) return -1;
+  const index = Number.parseInt(handle.replace("imageInputRef-", ""), 10);
+  return Number.isNaN(index) ? -1 : index;
+};
+
+const setImageReferenceAtIndex = (list, index, value) => {
+  const next = Array.isArray(list) ? [...list] : [];
+  if (index < 0) {
+    if (value && !next.includes(value)) next.push(value);
+    return next;
+  }
+  while (next.length <= index) next.push("");
+  next[index] = value || "";
+  return next;
+};
+
+const getNodeOutputValues = (node) => {
+  if (!node?.data) return [];
+  const values = [];
+  if (Array.isArray(node.data.outputs)) {
+    node.data.outputs.forEach((output) => {
+      const value = output?.value;
+      if (Array.isArray(value)) values.push(...value);
+      else values.push(value);
+    });
+  }
+  if (values.length === 0 && typeof node.data.resultUrl === "string") values.push(node.data.resultUrl);
+  return values.filter((value) => typeof value === "string" && value.trim() !== "");
+};
+
+const buildListItems = (targetNodeId, nodes, edges) => edges
+  .filter((edge) => edge.target === targetNodeId && edge.targetHandle === "listInput")
+  .flatMap((edge) => getNodeOutputValues(nodes.find((node) => node.id === edge.source)));
+
+const withListOutput = (formValues = {}) => {
+  const items = Array.isArray(formValues.items) ? formValues.items.filter((item) => typeof item === "string" && item.trim() !== "") : [];
+  const selectedIndex = Math.min(Math.max(Number.parseInt(formValues.selected_index ?? 0, 10) || 0, 0), Math.max(items.length - 1, 0));
+  const selectedItem = items[selectedIndex] || "";
+  return {
+    formValues: { ...formValues, items, selected_index: selectedIndex },
+    outputs: selectedItem ? [{ type: "text", value: selectedItem }] : [],
+    resultUrl: selectedItem || null,
+  };
+};
+
+const getOrderedImageReferenceValues = (connections, formValues) => {
+  const indexed = connections
+    .map((conn) => ({
+      index: getImageReferenceIndex(conn.targetHandle),
+      value: `{{ ${conn.source}.outputs[0].value }}`,
+      targetHandle: conn.targetHandle,
+    }));
+
+  const hasIndexed = indexed.some((item) => item.index >= 0);
+  if (!hasIndexed) {
+    return connections.length > 0
+      ? connections.map((conn) => `{{ ${conn.source}.outputs[0].value }}`)
+      : (formValues?.images_list || []);
+  }
+
+  const maxIndex = indexed.reduce((max, item) => Math.max(max, item.index), -1);
+  const values = Array.from({ length: maxIndex + 1 }, () => "");
+  indexed.forEach((item) => {
+    if (item.index >= 0) values[item.index] = item.value;
+  });
+  return values.filter((value) => value !== "");
+};
+
 const getEdgeColor = (sourceHandle, targetHandle, sourceNode = null, targetNode = null) => {
   if (sourceHandle === "apiOutput" && sourceNode) {
     const output = sourceNode.data.outputs?.[0];
@@ -101,19 +213,19 @@ const getEdgeColor = (sourceHandle, targetHandle, sourceNode = null, targetNode 
     return "green";
   }
 
-  if (["textOutput", "concatOutput"].includes(sourceHandle)) return "blue";
+  if (["textOutput", "concatOutput", "arraySeparatorOutput", "listOutput"].includes(sourceHandle)) return "blue";
   if (["imageOutput"].includes(sourceHandle)) return "green";
   if (["videoOutput"].includes(sourceHandle)) return "orange";
   if (["audioOutput"].includes(sourceHandle)) return "yellow";
 
-  if (["textInput", "textInput4", "imageInput", "videoInput", "audioInput2", "concatInput", "apiInput"].includes(targetHandle)) return "blue";
-  if (["textInput2", "textInput3", "imageInput2", "imageInput3", "imageInput4", "videoInput2", "videoInput3", "videoInput6", "audioInput3", "apiInput2", "apiInput3"].includes(targetHandle)) return "green";
+  if (["textInput", "textInput4", "imageInput", "videoInput", "audioInput2", "concatInput", "concatInput4", "arraySeparatorInput", "listInput", "apiInput"].includes(targetHandle)) return "blue";
+  if (["textInput2", "textInput3", "imageInput2", "imageInput3", "imageInput4", "videoInput2", "videoInput3", "videoInput6", "audioInput3", "concatImageInput", "apiInput2", "apiInput3"].includes(targetHandle) || isImageReferenceHandle(targetHandle)) return "green";
   if (["videoInput4", "audioInput4", "videoInput7"].includes(targetHandle)) return "orange";
   if (["audioInput", "videoInput5", "videoInput8"].includes(targetHandle)) return "yellow";
 
   if (sourceNode) {
     const type = sourceNode.type;
-    if (type === 'textNode' || type === 'concatNode') return "blue";
+    if (type === 'textNode' || type === 'concatNode' || type === 'arraySeparatorNode' || type === 'listNode') return "blue";
     if (type === 'imageNode') return "green";
     if (type === 'videoNode' || type === 'vidConcatNode') return "orange";
     if (type === 'audioNode') return "yellow";
@@ -168,7 +280,7 @@ const processWorkflowData = (workflowData, nodeSchemas, id) => {
   const restoredNodes = workflow.nodes.map(n => ({
     id: n.id,
     type: n.category === "utility" 
-      ? (n.model === "video-combiner" ? "vidConcatNode" : "concatNode") 
+      ? (n.model === "video-combiner" ? "vidConcatNode" : n.model === "array-separator" ? "arraySeparatorNode" : n.model === "list" ? "listNode" : "concatNode") 
       : `${n.category}Node`,
     position: {
       x: n.position?.x ?? 350,
@@ -186,21 +298,13 @@ const processWorkflowData = (workflowData, nodeSchemas, id) => {
     }
   }));
 
-  const restoredEdges = (workflowData.edges || []).map((e) => {
+  const restoredEdges = restoreBuilderEdges(workflowData.edges || [], (e) => {
     const sourceNode = restoredNodes.find(n => n.id === e.source);
     const targetNode = restoredNodes.find(n => n.id === e.target);
     let edgeColor = getEdgeColor(e.sourceHandle, e.targetHandle, sourceNode, targetNode);
 
-    return {
-      id: e.id || `${e.source}-${e.target}`,
-      source: e.source,
-      target: e.target,
-      sourceHandle: e.sourceHandle || null,
-      targetHandle: e.targetHandle || null,
-      style: edgeStyles[edgeColor],
-    }
+    return restoreBuilderEdge(e, edgeColor);
   });
-
   return {
     nodes: restoredNodes,
     edges: restoredEdges,
@@ -313,7 +417,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
   const loadPreset = (preset) => {
     setIsPresetsDismissed(true);
     setNodes(preset.nodes);
-    setEdges(preset.edges);
+    setEdges(getBuilderDefaultEdges(preset.edges || []));
     setTimeout(() => fitView({ padding: 0.4, duration: 500 }), 100);
   };
 
@@ -369,7 +473,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
     const restoredNodes = workflow.nodes.map(n => ({
       id: n.id,
       type: n.category === "utility" 
-        ? (n.model === "video-combiner" ? "vidConcatNode" : "concatNode") 
+        ? (n.model === "video-combiner" ? "vidConcatNode" : n.model === "array-separator" ? "arraySeparatorNode" : n.model === "list" ? "listNode" : "concatNode") 
         : `${n.category}Node`,
       position: {
         x: n.position?.x ?? 350,
@@ -387,19 +491,12 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
       }
     }));
 
-    const restoredEdges = (workflowData.edges || []).map((e) => {
+    const restoredEdges = restoreBuilderEdges(workflowData.edges || [], (e) => {
       const sourceNode = restoredNodes.find(n => n.id === e.source);
       const targetNode = restoredNodes.find(n => n.id === e.target);
       let edgeColor = getEdgeColor(e.sourceHandle, e.targetHandle, sourceNode, targetNode);
 
-      return {
-        id: e.id || `${e.source}-${e.target}`,
-        source: e.source,
-        target: e.target,
-        sourceHandle: e.sourceHandle || null,
-        targetHandle: e.targetHandle || null,
-        style: edgeStyles[edgeColor],
-      }
+      return restoreBuilderEdge(e, edgeColor);
     });
 
     setNodes(restoredNodes);
@@ -532,19 +629,45 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
         let updatedFormValues = { ...node.data.formValues };
 
         const sourceNode = updatedNodes.find((n) => n.id === edge.source);
-        const sourceValue = sourceNode?.type === "concatNode"
-          ? sourceNode?.data?.formValues?.prompt
-          : resultValue;
+        const sourceValue = resultValue;
 
         if (["textInput", "imageInput", "videoInput", "audioInput2", "apiInput"].includes(targetHandle)) {
           updatedFormValues.prompt = sourceValue;
+        }
+
+        else if (targetHandle === "arraySeparatorInput") {
+          updatedFormValues.text = sourceValue;
+        }
+
+        else if (targetHandle === "listInput") {
+          updatedFormValues.items = buildListItems(node.id, updatedNodes, edges);
+        }
+
+        else if (["concatInput", "concatInput4"].includes(targetHandle)) {
+          const concatFieldByHandle = {
+            concatInput: "prompt",
+            concatInput4: "system_prompt",
+          };
+          updatedFormValues[concatFieldByHandle[targetHandle]] = sourceValue;
         }
 
         else if (targetHandle === "textInput4") {
           updatedFormValues.system_prompt = sourceValue;
         }
 
-        else if (["textInput3", "imageInput2", "videoInput6"].includes(targetHandle)) {
+        else if (targetHandle === "concatImageInput") {
+          updatedFormValues.image_url = resultValue;
+        }
+
+        else if (isImageReferenceHandle(targetHandle)) {
+          updatedFormValues.images_list = setImageReferenceAtIndex(
+            updatedFormValues.images_list,
+            getImageReferenceIndex(targetHandle),
+            resultValue
+          );
+        }
+
+        else if (["textInput3", "videoInput6"].includes(targetHandle)) {
           const list = Array.isArray(updatedFormValues.images_list)
             ? [...updatedFormValues.images_list]
             : [];
@@ -629,40 +752,45 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
       });
 
       updatedNodes = updatedNodes.map((node) => {
-        if (node.type !== "concatNode") return node;
+        if (node.type === "concatNode") {
+          const concatFieldByHandle = {
+            concatInput: "prompt",
+            concatInput4: "system_prompt",
+            concatImageInput: "image_url",
+          };
+          const nextFormValues = { ...node.data.formValues };
 
-        const allConcatEdges = edges.filter((e) =>
-          e.target === node.id && e.targetHandle === "concatInput"
-        );
+          Object.entries(concatFieldByHandle).forEach(([handle, field]) => {
+            const matchingEdges = edges.filter((e) => e.target === node.id && e.targetHandle === handle);
+            if (matchingEdges.length === 0) return;
+            const values = matchingEdges.map((e) => {
+              const sourceNode = updatedNodes.find((n) => n.id === e.source);
+              return sourceNode?.data?.resultUrl || sourceNode?.data?.outputs?.[0]?.value || "";
+            }).filter((v) => typeof v === "string" && v.trim() !== "");
+            nextFormValues[field] = values.join("\n\n").trim();
+          });
 
-        if (allConcatEdges.length === 0) {
           return {
             ...node,
             data: {
               ...node.data,
-              formValues: {
-                ...node.data.formValues,
-                prompt: "",
-              },
+              formValues: nextFormValues,
             },
           };
         }
 
-        const concatValues = allConcatEdges.map((e) => {
-          const sourceNode = updatedNodes.find((n) => n.id === e.source);
-          return sourceNode?.data?.resultUrl || sourceNode?.data?.outputs?.[0]?.value || "";
-        }).filter((v) => typeof v === "string" && v.trim() !== "");
-
-        return {
-          ...node,
-          data: {
-            ...node.data,
-            formValues: {
-              ...node.data.formValues,
-              prompt: concatValues.length > 0 ? concatValues.join(" ").trim() : "",
+        if (node.type === "listNode") {
+          const items = buildListItems(node.id, updatedNodes, edges);
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              ...withListOutput({ ...(node.data.formValues || {}), items }),
             },
-          },
-        };
+          };
+        }
+
+        return node;
       });
 
       return updatedNodes;
@@ -712,18 +840,19 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
           }
         }
 
-        const newEdges = addEdge({ ...params, style: edgeStyles[color] }, eds);
+        const newEdges = createBuilderEdge({ ...params }, color, eds);
         if (!sourceNode || !targetNode || !sourceNode.data) return newEdges;
 
         const sourceData = sourceNode.data;
+        const outputValues = Array.isArray(sourceData.outputs)
+          ? sourceData.outputs.map((output) => output?.value).filter((value) => typeof value === "string" && value.trim() !== "")
+          : [];
         const resultValue = sourceData.viewingOutput !== undefined
           ? sourceData.viewingOutput
-          : (sourceData.resultUrl || sourceData.outputs?.[0]?.value || null);
+          : (sourceData.resultUrl || outputValues[0] || null);
         // if (!resultValue || resultValue.trim() === "") return newEdges;
 
-        const sourceValue = sourceNode?.type === "concatNode"
-          ? sourceNode?.data?.formValues?.prompt
-          : resultValue;
+        const sourceValue = resultValue;
 
         setNodes((prev) =>
           prev.map((n) => {
@@ -737,9 +866,10 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
 
               if (isList) {
                 const list = Array.isArray(updatedFormValues[params.targetHandle]) ? [...updatedFormValues[params.targetHandle]] : [];
-                if (sourceValue && sourceValue.trim() !== "" && !list.includes(sourceValue)) {
-                  list.push(sourceValue);
-                }
+                const valuesToAppend = sourceNode?.type === "arraySeparatorNode" ? outputValues : [sourceValue];
+                valuesToAppend.forEach((value) => {
+                  if (value && value.trim() !== "" && !list.includes(value)) list.push(value);
+                });
                 updatedFormValues[params.targetHandle] = list;
               } else {
                 updatedFormValues[params.targetHandle] = sourceValue;
@@ -747,22 +877,23 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
             }
 
             if (color === "blue") {
-              if (targetNode.type === "concatNode" && params.targetHandle === "concatInput") {
-                const allConcatEdges = newEdges.filter((e) =>
-                  e.target === targetNode.id && e.targetHandle === "concatInput"
-                );
-
-                const concatValues = allConcatEdges.map((e) => {
-                  if (e.source === params.source) return resultValue;
-                  const sourceNode = prev.find((node) => node.id === e.source);
-                  return sourceNode?.data?.resultUrl || sourceNode?.data?.outputs?.[0]?.value || "";
-                }).filter(v => v);
-
-                updatedFormValues.prompt = concatValues.join(" ");
+              if (targetNode.type === "concatNode") {
+                const concatFieldByHandle = {
+                  concatInput: "prompt",
+                  concatInput4: "system_prompt",
+                };
+                const fieldName = concatFieldByHandle[params.targetHandle];
+                if (fieldName) updatedFormValues[fieldName] = sourceValue || "";
               }
 
               else if (["textInput", "imageInput", "videoInput", "audioInput2", "apiInput"].includes(params.targetHandle)) {
                 updatedFormValues.prompt = sourceValue || "";
+              }
+              else if (params.targetHandle === "arraySeparatorInput") {
+                updatedFormValues.text = sourceValue || "";
+              }
+              else if (params.targetHandle === "listInput") {
+                updatedFormValues.items = buildListItems(n.id, nodes, [...eds, newEdges[newEdges.length - 1]]);
               }
               else if (params.targetHandle === "textInput4") {
                 updatedFormValues.system_prompt = sourceValue || "";
@@ -770,15 +901,24 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
             }
 
             if (color === "green") {
-              if (["textInput2", "videoInput2", "imageInput3", "audioInput3"].includes(params.targetHandle)) {
+              if (params.targetHandle === "concatImageInput") {
+                updatedFormValues.image_url = resultValue || null;
+              } else if (["textInput2", "videoInput2", "imageInput3", "audioInput3"].includes(params.targetHandle)) {
                 updatedFormValues.image_url = resultValue || null;
               } else if (params.targetHandle === "imageInput4") {
                 updatedFormValues.image = resultValue || null;
-              } else if (["textInput3", "imageInput2", "videoInput6"].includes(params.targetHandle)) {
+              } else if (isImageReferenceHandle(params.targetHandle)) {
+                updatedFormValues.images_list = setImageReferenceAtIndex(
+                  updatedFormValues.images_list,
+                  getImageReferenceIndex(params.targetHandle),
+                  resultValue
+                );
+              } else if (["textInput3", "videoInput6"].includes(params.targetHandle)) {
                 const list = Array.isArray(updatedFormValues.images_list) ? [...updatedFormValues.images_list] : [];
-                if (!list.includes(resultValue) && resultValue && resultValue.trim() !== "") {
-                  list.push(resultValue);
-                }
+                const valuesToAppend = sourceNode?.type === "arraySeparatorNode" ? outputValues : [resultValue];
+                valuesToAppend.forEach((value) => {
+                  if (!list.includes(value) && value && value.trim() !== "") list.push(value);
+                });
                 updatedFormValues.images_list = list;
               } else if (params.targetHandle === "apiInput2") {
                 const list = Array.isArray(updatedFormValues.images) ? [...updatedFormValues.images] : [];
@@ -882,7 +1022,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
 
               return {
                 id: newId,
-                type: n.category === "utility" ? (n.model === "video-combiner" ? "vidConcatNode" : "concatNode") : `${n.category}Node`,
+                type: n.category === "utility" ? (n.model === "video-combiner" ? "vidConcatNode" : n.model === "array-separator" ? "arraySeparatorNode" : n.model === "list" ? "listNode" : "concatNode") : `${n.category}Node`,
                 position: existingNode?.position || {
                   x: n.position?.x ?? 350,
                   y: n.position?.y ?? 0
@@ -931,14 +1071,13 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
 
                 let edgeColor = getEdgeColor(sourceHandle, targetHandle, sourceNode, targetNode);
 
-                return {
+                return restoreBuilderEdge({
                   id: `e-${source}-${target}`,
                   source,
                   target,
                   sourceHandle,
                   targetHandle,
-                  style: edgeStyles[edgeColor],
-                };
+                }, edgeColor);
               });
 
               setEdges(newEdges);
@@ -1087,26 +1226,40 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
       const inputNodes = connectedEdges.map((e) => e.source);
       const category = node.type === "textNode" ? "text" : node.type === "imageNode" ? "image" : node.type === "videoNode" ? "video" : node.type === "apiNode" ? "api" : node.type === "audioNode" ? "audio" : "utility";
       const isVideoCombiner = node.type === "vidConcatNode";
-      const model = node.data?.selectedModel?.id ? node.data?.selectedModel?.id : category === "utility" ? (isVideoCombiner ? "video-combiner" : "prompt-concatenator") : `${category}-passthrough`;
+      const isListNode = node.type === "listNode";
+      const model = node.data?.selectedModel?.id ? node.data?.selectedModel?.id : category === "utility" ? (isVideoCombiner ? "video-combiner" : isListNode ? "list" : node.type === "arraySeparatorNode" ? "array-separator" : "prompt-concatenator") : `${category}-passthrough`;
       const modelSchema = nodeSchemas?.categories?.[category]?.models?.[model]?.input_schema?.schemas?.input_data;
       const inputSchema = modelSchema?.properties || {};
       const wavespeedSchema = nodeSchemas?.categories?.api?.models?.[model]?.input_schema;
-      const concatSchema = nodeSchemas?.categories?.utility?.models?.["prompt-concatenator"]?.input_schema;
+      const concatSchema = nodeSchemas?.categories?.utility?.models?.["prompt-concatenator"]?.input_schema?.schemas?.input_data?.properties || {};
+      const listSchema = nodeSchemas?.categories?.utility?.models?.["list"]?.input_schema?.schemas?.input_data?.properties || { items: { default: [] } };
       const videoCombinerSchema = nodeSchemas?.categories?.utility?.models?.["video-combiner"]?.input_schema?.schemas?.input_data?.properties;
       const formValues = node.data?.formValues || {};
 
       let dynamicPrompt = "";
+      let dynamicConcatSystemPrompt = formValues?.system_prompt || "";
+      let dynamicConcatImageUrl = formValues?.image_url || null;
 
       if (node.type === "concatNode") {
-        const promptConnections = connectedEdges.filter((e) =>
-          ["concatInput"].includes(e.targetHandle)
-        );
-        dynamicPrompt = promptConnections.length > 0
-          ? promptConnections.map((conn) => `{{ ${conn.source}.outputs[0].value }}`)
-          : [];
+        const concatFieldByHandle = {
+          concatInput: "prompt",
+          concatInput4: "system_prompt",
+        };
+        Object.entries(concatFieldByHandle).forEach(([handle, field]) => {
+          const connections = connectedEdges.filter((e) => e.targetHandle === handle);
+          const value = connections.length > 0
+            ? connections.map((conn) => `{{ ${conn.source}.outputs[0].value }}`).join("\n\n")
+            : (formValues?.[field] || "");
+          if (field === "prompt") dynamicPrompt = value;
+          if (field === "system_prompt") dynamicConcatSystemPrompt = value;
+        });
+        const concatImageConnections = connectedEdges.filter((e) => e.targetHandle === "concatImageInput");
+        dynamicConcatImageUrl = concatImageConnections.length > 0
+          ? `{{ ${concatImageConnections[0].source}.outputs[0].value }}`
+          : formValues?.image_url || null;
       } else {
         const promptConnections = connectedEdges.filter((e) =>
-          ["textInput", "imageInput", "videoInput", "audioInput2", "apiInput"].includes(e.targetHandle)
+          ["textInput", "imageInput", "videoInput", "audioInput2", "arraySeparatorInput", "apiInput"].includes(e.targetHandle)
         );
         dynamicPrompt = promptConnections.length > 0
           ? `{{ ${promptConnections[0].source}.outputs[0].value }}`
@@ -1114,7 +1267,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
       }
 
       const systemPromptConnections = connectedEdges.filter((e) =>
-        e.targetHandle === "textInput4"
+        ["textInput4", "concatInput4"].includes(e.targetHandle)
       );
       const dynamicSystemPrompt =
         systemPromptConnections.length > 0
@@ -1122,15 +1275,10 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
           : formValues?.system_prompt || null;
 
       const imageListConnections = connectedEdges.filter((e) =>
-        ["textInput3", "imageInput2", "videoInput6", "apiInput2"].includes(e.targetHandle)
+        ["textInput3", "videoInput6", "apiInput2"].includes(e.targetHandle) || isImageReferenceHandle(e.targetHandle)
       );
 
-      const dynamicImagesList =
-        imageListConnections.length > 0
-          ? imageListConnections.map(
-            (conn) => `{{ ${conn.source}.outputs[0].value }}`
-          )
-          : formValues?.images_list || []; // || [node.data?.outputs?.[0]?.value] 
+      const dynamicImagesList = getOrderedImageReferenceValues(imageListConnections, formValues);
 
       const imageUrlConnections = connectedEdges.filter((e) =>
         ["textInput2", "videoInput2", "imageInput3", "imageInput4", "audioInput3", "apiInput3"].includes(e.targetHandle)
@@ -1191,14 +1339,18 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
       const localSources = {
         ...formValues,
         prompt: dynamicPrompt ? dynamicPrompt : formValues?.prompt,
-        system_prompt: dynamicSystemPrompt,
+        text: node.type === "arraySeparatorNode" ? (dynamicPrompt || formValues?.text || "") : formValues?.text,
+        context_2: formValues?.context_2,
+        context_3: formValues?.context_3,
+        context_4: formValues?.context_4,
+        system_prompt: node.type === "concatNode" ? dynamicConcatSystemPrompt : dynamicSystemPrompt,
         images_list: dynamicImagesList,
         images: dynamicImagesList,
         image_urls: dynamicImagesList,
-        image_url: dynamicImageUrl,
+        image_url: node.type === "concatNode" ? dynamicConcatImageUrl : dynamicImageUrl,
         video_url: dynamicVideoUrl,
         audio_url: dynamicAudioUrl,
-        image: dynamicImageUrl,
+        image: dynamicImageUrl || dynamicImagesList[0] || null,
         last_image: dynamicLastImage,
         videos_list: dynamicVideosList,
         video_files: dynamicVideosList,
@@ -1272,6 +1424,16 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
             params[key] = meta.default ?? null;
           }
         }
+      } else if (node.type === "listNode") {
+        for (const [key, meta] of Object.entries(listSchema)) {
+          if (key === "items") {
+            params[key] = Array.isArray(formValues?.items) ? formValues.items : [];
+          } else if (localSources[key] !== undefined && localSources[key] !== null) {
+            params[key] = localSources[key];
+          } else {
+            params[key] = meta.default ?? null;
+          }
+        }
       } else {
         for (const [key, meta] of Object.entries(inputSchema)) {
           if (localSources[key] !== undefined && localSources[key] !== null) {
@@ -1287,7 +1449,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
           resultUrl: node.data?.resultUrl || "",
           outputs: node.data?.outputs || [],
         }
-      } else if (["imageNode", "videoNode", "audioNode", "apiNode", "concatNode", "vidConcatNode"].includes(node.type)) {
+      } else if (["imageNode", "videoNode", "audioNode", "apiNode", "concatNode", "arraySeparatorNode", "listNode", "vidConcatNode"].includes(node.type)) {
         output_params = {
           resultUrl: node.data?.resultUrl || null,
           outputs: node.data?.outputs || [],
@@ -1659,7 +1821,9 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
       setEdges,
       handleTypes: {
         ...(node.type === 'apiNode' ? Object.keys(node.data?.formValues || {}).reduce((acc, key) => ({ ...acc, [key]: 'white' }), {}) : {}),
-        concatInput: "blue", concatOutput: "blue",
+        concatInput: "blue", concatInput4: "blue", concatImageInput: "green", concatOutput: "blue",
+        arraySeparatorInput: "blue", arraySeparatorOutput: "blue",
+        listInput: "blue", listOutput: "blue",
         apiInput: "blue", apiInput2: "green", apiInput3: "green",
         apiOutput: (() => {
           if (node.type !== 'apiNode') return "green";
@@ -1672,6 +1836,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
         })(),
         textInput: "blue", textInput2: "green", textInput3: "green", textInput4: "blue", textOutput: "blue",
         imageInput: "blue", imageInput2: "green", imageInput3: "green", imageInput4: "green", imageOutput: "green",
+        ...(node.type === 'imageNode' ? Object.fromEntries(Array.from({ length: Math.max(1, Array.isArray(node.data?.formValues?.images_list) ? node.data.formValues.images_list.length : 0) }, (_, index) => [`imageInputRef-${index}`, "green"])) : {}),
         videoInput: "blue", videoInput2: "green", videoInput3: "green", videoInput4: "orange", videoInput5: "yellow", videoInput6: "green", videoInput7: "orange", videoInput8: "yellow", videoOutput: "orange",
         audioInput: "yellow", audioInput2: "blue", audioInput3: "green", audioInput4: "orange", audioOutput: "yellow",
       }
@@ -1723,6 +1888,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
           hasImagesList && "imageInput2",
           hasImageImageUrl && "imageInput3",
           hasReferenceImage && "imageInput4",
+          ...(hasImagesList || hasReferenceImage ? Array.from({ length: Math.max(1, Array.isArray(formValues.images_list) ? formValues.images_list.length : 0) }, (_, index) => `imageInputRef-${index}`) : []),
         ].filter(Boolean);
         break;
 
@@ -1758,6 +1924,22 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
           hasAudioImageUrl && "audioInput3",
           hasAudioVideoUrl && "audioInput4",
         ].filter(Boolean);
+        break;
+
+      case "concatNode":
+        validHandles = [
+          "prompt" in formValues && "concatInput",
+          "system_prompt" in formValues && "concatInput4",
+          "image_url" in formValues && "concatImageInput",
+        ].filter(Boolean);
+        break;
+
+      case "arraySeparatorNode":
+        validHandles = ["arraySeparatorInput"];
+        break;
+
+      case "listNode":
+        validHandles = ["listInput"];
         break;
 
       case "apiNode":
@@ -1822,7 +2004,9 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
     const newNodeId = getNextId(nodeType);
 
     const handleTypesMap = {
-      concatInput: "blue", concatOutput: "blue",
+      concatInput: "blue", concatInput2: "blue", concatInput3: "blue", concatInput4: "blue", concatImageInput: "green", concatOutput: "blue",
+      arraySeparatorInput: "blue", arraySeparatorOutput: "blue",
+      listInput: "blue", listOutput: "blue",
       apiInput: "blue", apiInput2: "green", apiInput3: "green", apiOutput: "green",
       textInput: "blue", textInput2: "green", textInput3: "green", textInput4: "blue", textOutput: "blue",
       imageInput: "blue", imageInput2: "green", imageInput3: "green", imageInput4: "green", imageOutput: "green",
@@ -1855,7 +2039,9 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
         videoNode: ["videoInput", "videoInput2", "videoInput3", "videoInput4", "videoInput5", "videoInput6", "videoInput7", "videoInput8"],
         audioNode: ["audioInput", "audioInput2", "audioInput3", "audioInput4"],
         apiNode: ["apiInput", "apiInput2", "apiInput3"],
-        concatNode: ["concatInput"],
+        concatNode: ["concatInput", "concatInput4", "concatImageInput"],
+        arraySeparatorNode: ["arraySeparatorInput"],
+        listNode: ["listInput"],
         vidConcatNode: ["videoInput7"],
       };
 
@@ -1881,6 +2067,8 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
         audioNode: ["audioOutput"],
         apiNode: ["apiOutput"],
         concatNode: ["concatOutput"],
+        arraySeparatorNode: ["arraySeparatorOutput"],
+        listNode: ["listOutput"],
         vidConcatNode: ["videoOutput"],
       };
 
@@ -1914,7 +2102,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
   const getCompatibleNodeTypes = (handleColor, isOutput) => {
     if (isOutput) {
       const compatibilityMap = {
-        blue: ['textNode', 'imageNode', 'videoNode', 'audioNode', 'apiNode', 'concatNode'],
+        blue: ['textNode', 'imageNode', 'videoNode', 'audioNode', 'apiNode', 'concatNode', 'arraySeparatorNode', 'listNode'],
         green: ['imageNode', 'videoNode', 'apiNode'],
         orange: ['videoNode', 'vidConcatNode'],
         yellow: ['audioNode', 'videoNode']
@@ -1922,7 +2110,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
       return compatibilityMap[handleColor] || [];
     } else {
       const compatibilityMap = {
-        blue: ['textNode', 'concatNode', 'apiNode'],
+        blue: ['textNode', 'concatNode', 'arraySeparatorNode', 'listNode', 'apiNode'],
         green: ['imageNode', 'apiNode'],
         orange: ['videoNode', 'vidConcatNode'],
         yellow: ['audioNode']
@@ -2026,6 +2214,24 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
   const updateNodeFromPanel = useCallback((key, value) => {
     if (!selectedNode) return;
 
+    if (key === "images_list") {
+      const previousList = Array.isArray(selectedNode.data?.formValues?.images_list)
+        ? selectedNode.data.formValues.images_list
+        : [];
+      const nextList = Array.isArray(value) ? value : [];
+      const removedIndexes = previousList
+        .map((item, index) => (nextList[index] === item ? null : index))
+        .filter((index) => index !== null);
+
+      if (removedIndexes.length > 0) {
+        setEdges((eds) => eds.filter((edge) => {
+          if (edge.target !== selectedNode.id) return true;
+          const refIndex = getImageReferenceIndex(edge.targetHandle);
+          return refIndex < 0 || !removedIndexes.includes(refIndex);
+        }));
+      }
+    }
+
     setNodes((nds) =>
       nds.map((node) => {
         if (node.id === selectedNode?.id) {
@@ -2043,7 +2249,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
         return node;
       })
     );
-  }, [selectedNode, setNodes]);
+  }, [selectedNode, setNodes, setEdges]);
 
   const updateModel = useCallback((model) => {
     if (!selectedNode) return;
@@ -2079,6 +2285,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
     if (node.type === "imageNode") return mapModels(nodeSchemas.categories.image?.models);
     if (node.type === "videoNode") return mapModels(nodeSchemas.categories.video?.models);
     if (node.type === "audioNode") return mapModels(nodeSchemas.categories.audio?.models);
+    if (["concatNode", "arraySeparatorNode", "vidConcatNode"].includes(node.type)) return mapModels(nodeSchemas.categories.utility?.models);
     if (node.type === "apiNode") return filteredApiNodeModels;
     return [];
   };
@@ -2104,14 +2311,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
     });
   };
 
-  const connectionLineStyle = {
-    stroke: activeHandleColor === 'blue' ? '#3b82f6'
-      : activeHandleColor === 'green' ? '#22c55e'
-        : activeHandleColor === 'orange' ? '#f97316'
-          : activeHandleColor === 'yellow' ? '#eab308'
-            : '#ffffffff',
-    strokeWidth: 2,
-  };
+  const connectionLineStyle = builderConnectionLineStyle(activeHandleColor);
 
   return (
     <div tabIndex={0} onKeyDown={onKeyDown} className="flex h-dvh w-full relative">
@@ -2396,6 +2596,8 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
           selectionMode={!isDragging ? "partial" : null}
           multiSelectionKeyCode="Shift"
           connectionLineStyle={connectionLineStyle}
+          connectionLineType={builderConnectionLineType}
+          defaultEdgeOptions={builderDefaultEdgeOptions}
           fitView={() => fitView({ padding: 0.4, duration: 500, minZoom: 0.2 })}
           proOptions={{ hideAttribution: true }}
         >
@@ -2430,7 +2632,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
           })()}
         </ReactFlow>
       </div>
-      {selectedNode && !["concatNode"].includes(selectedNode.type) && (
+      {selectedNode && (
         <div className="absolute right-2 top-16 z-50 w-80 h-full max-h-[90%] bg-[#09090b]/80 backdrop-blur-xl border border-white/20 rounded-2xl flex transition-all duration-300 ease-in-out shadow-2xl">
           <button
             type="button"

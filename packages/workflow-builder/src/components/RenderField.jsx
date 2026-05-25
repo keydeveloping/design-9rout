@@ -98,6 +98,8 @@ const RenderField = ({ fieldName, meta, idx, formValues, setFormValues, handleCh
   if (isInputModel && meta.type !== "boolean") return null;
 
   if (meta.enum) {
+    const getEnumLabel = (option) => meta.enum_labels?.[option] || option;
+
     return (
       <div key={fieldName} className="flex flex-col gap-1 w-full">
         {label}
@@ -124,7 +126,7 @@ const RenderField = ({ fieldName, meta, idx, formValues, setFormValues, handleCh
             className="flex items-center justify-between gap-1 text-xs text-center text-white w-full h-full cursor-pointer whitespace-nowrap px-3 py-1.5 bg-zinc-900/50 border border-white/10 hover:border-white/20 focus:outline-none rounded-lg transition-all"
           >
             <div className="flex items-center gap-2 truncate">
-              <span className="truncate">{value}</span>
+              <span className="truncate">{getEnumLabel(value)}</span>
             </div>
             <FaAngleDown
               size={14}
@@ -154,7 +156,7 @@ const RenderField = ({ fieldName, meta, idx, formValues, setFormValues, handleCh
                 }`}
                 onClick={() => {handleChange(fieldName, option); setDropDown(-1)}}
               >
-                <span className="truncate">{option}</span>
+                <span className="truncate">{getEnumLabel(option)}</span>
                 {formValues[fieldName] === option && (
                   <span className="ml-auto text-blue-400 font-bold">✓</span>
                 )}
@@ -171,29 +173,28 @@ const RenderField = ({ fieldName, meta, idx, formValues, setFormValues, handleCh
       <div key={fieldName} className="flex flex-col gap-2">
         {label}
         <div className="flex items-center gap-1">
-          <input 
-            type="text" 
-            value={formValues[fieldName] || ''} 
-            readOnly
-            // onChange={(e) => handleChange(fieldName, e.target.value)} 
-            className="bg-zinc-900/50 text-white text-xs py-2 px-3 rounded-lg border border-white/10 transition-all hover:border-white/20 w-full outline-none focus:border-blue-500/50" 
-            placeholder="Add a file or provide an URL" 
+          <input
+            type="text"
+            value={formValues[fieldName] || ''}
+            onChange={(e) => handleChange(fieldName, e.target.value)}
+            className="bg-zinc-900/50 text-white text-xs py-2 px-3 rounded-lg border border-white/10 transition-all hover:border-white/20 w-full outline-none focus:border-blue-500/50"
+            placeholder="Add a file or provide an URL"
           />
-          {/* <input 
-            type="file" 
+          <input
+            type="file"
             accept={
-              isImageField ? "image/*" : 
-              isVideoField ? "video/*" : 
-              isAudioField ? "audio/*": 
+              isImageField ? "image/*" :
+              isVideoField ? "video/*" :
+              isAudioField ? "audio/*":
               "image/*,video/*,audio/*"
             }
-            id={`file-upload-${fieldName}`} 
-            className="hidden" 
+            id={`file-upload-${fieldName}`}
+            className="hidden"
             disabled={uploading}
-            onChange={(e) => handleFileUpload(fieldName, meta, e)} 
+            onChange={(e) => handleFileUpload(fieldName, meta, e)}
           />
-          <label 
-            htmlFor={`file-upload-${fieldName}`} 
+          <label
+            htmlFor={`file-upload-${fieldName}`}
             className={`flex items-center justify-center gap-1 bg-blue-500 text-white hover:bg-blue-600 text-xs font-medium cursor-pointer flex-shrink-0 ${
               uploading ? 'rounded-full h-6 w-6': 'rounded py-1 px-3'}
             `}
@@ -203,7 +204,7 @@ const RenderField = ({ fieldName, meta, idx, formValues, setFormValues, handleCh
             ) : (
               <IoCloudUploadOutline size={16} />
             )}
-          </label> */}
+          </label>
         </div>
         {uploading && (
           <div className="w-full bg-gray-700/70 rounded h-1 overflow-hidden">

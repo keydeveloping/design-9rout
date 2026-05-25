@@ -21,10 +21,16 @@ const NodesNavbar = ({ addNode, filterNodeTypes = null, nodeSchemas = {} }) => {
   const anchorRef = useRef(null);
   const [menuStyle, setMenuStyle] = useState({ opacity: 0 });
 
+  const getUtilityNodeType = (model) => {
+    if (model?.id === "array-separator") return "arraySeparatorNode";
+    if (model?.id === "list") return "listNode";
+    return "concatNode";
+  };
+
   const getNodeTypeFromSubmenuId = (id) => {
     if (id === 'inputs') return ['textNode', 'imageNode', 'audioNode'];
     if (id === 'text-llms') return 'textNode';
-    if (id === 'utilities') return 'concatNode';
+    if (id === 'utilities') return ['concatNode', 'arraySeparatorNode', 'listNode'];
     if (id === 'generate-image') return 'imageNode';
     if (id === 'generate-audio') return 'audioNode';
     return null;
@@ -109,7 +115,7 @@ const NodesNavbar = ({ addNode, filterNodeTypes = null, nodeSchemas = {} }) => {
   const getSubmenuItems = (id) => {
     switch (id) {
       case "inputs": return categorizedModels.inputs.map(m => ({ label: m.name, model: m, type: m.type }));
-      case "utilities": return categorizedModels.utilities.map(m => ({ label: m.name, model: m, type: "concatNode" }));
+      case "utilities": return categorizedModels.utilities.map(m => ({ label: m.name, model: m, type: getUtilityNodeType(m) }));
       case "generate-image": return categorizedModels.generateImage.map(m => ({ label: m.name, model: m, type: "imageNode" }));
       case "text-llms": return categorizedModels.text.map(m => ({ label: m.name, model: m, type: "textNode" }));
       case "generate-audio": return categorizedModels.audio.map(m => ({ label: m.name, model: m, type: "audioNode" }));
@@ -123,7 +129,7 @@ const NodesNavbar = ({ addNode, filterNodeTypes = null, nodeSchemas = {} }) => {
       ...categorizedModels.generateImage.map(m => ({ ...m, type: "imageNode" })),
       ...categorizedModels.text.map(m => ({ ...m, type: "textNode" })),
       ...categorizedModels.audio.map(m => ({ ...m, type: "audioNode" })),
-      ...categorizedModels.utilities.map(m => ({ ...m, type: "concatNode" })),
+      ...categorizedModels.utilities.map(m => ({ ...m, type: getUtilityNodeType(m) })),
     ];
     const filtered = allModels.filter(m => m?.name?.toLowerCase().includes(searchQuery.toLowerCase()));
 
@@ -140,7 +146,7 @@ const NodesNavbar = ({ addNode, filterNodeTypes = null, nodeSchemas = {} }) => {
             {item.type === "imageNode" && <IoImageOutline />}
             {item.type === "textNode" && <TfiText />}
             {item.type === "audioNode" && <AiOutlineAudio />}
-            {item.type === "concatNode" && <TbArrowMerge className="rotate-90" />}
+            {(["concatNode", "arraySeparatorNode", "listNode"].includes(item.type)) && <TbArrowMerge className="rotate-90" />}
             <span>{item.name}</span>
           </button>
         )) : (

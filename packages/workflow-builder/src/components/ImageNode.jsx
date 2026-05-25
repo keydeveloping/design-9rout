@@ -300,6 +300,56 @@ const ImageGeneration = ({ id, data, selected }) => {
   const hasImageUrl = properties && "image_url" in properties && !data.selectedModel?.id.includes("passthrough");
   const hasReferenceImage = properties && "image" in properties && !data.selectedModel?.id.includes("passthrough");
 
+  const hasReferenceImages = (hasImagesList || hasReferenceImage) && !data.selectedModel?.id.includes("passthrough");
+  const connectedReferenceHandles = edges
+    .filter((e) => e.target === id && (e.targetHandle === "imageInput2" || String(e.targetHandle || "").startsWith("imageInputRef-")))
+    .map((e) => e.targetHandle);
+  const indexedReferenceHandles = connectedReferenceHandles
+    .filter((handle) => String(handle).startsWith("imageInputRef-"))
+    .map((handle) => Number.parseInt(String(handle).replace("imageInputRef-", ""), 10))
+    .filter((index) => !Number.isNaN(index));
+  const referenceImageCount = hasReferenceImages
+    ? Math.max(1, Array.isArray(formValues.images_list) ? formValues.images_list.length : 0, indexedReferenceHandles.length ? Math.max(...indexedReferenceHandles) + 1 : 0)
+    : 0;
+  const referenceHandles = Array.from({ length: referenceImageCount }, (_, index) => ({
+    id: `imageInputRef-${index}`,
+    top: 126 + (index * 24),
+    label: `Image ${index + 1}`,
+    connected: connectedInputs[`imageInputRef-${index}`] || connectedInputs.imageInput2 || false,
+  }));
+
+  const handleBottom = referenceImageCount > 0 ? referenceHandles[referenceHandles.length - 1].top + 18 : 0;
+  const nodeWidth = 250;
+  const previewWidth = nodeWidth - 16;
+  const previewHeight = previewWidth * ((imageMetadata.height || 1) / (imageMetadata.width || 1));
+  const previewSectionHeight = previewHeight + 8;
+  const outputSectionMinHeight = Math.max(previewSectionHeight, handleBottom + 8);
+  const bottomSectionHeight = hasReferenceImages ? 42 : 0;
+  const nodeMinHeight = 52 + outputSectionMinHeight + bottomSectionHeight;
+  const outputSectionStyle = { minHeight: outputSectionMinHeight, height: outputSectionMinHeight - bottomSectionHeight, paddingBottom: bottomSectionHeight };
+  const bottomSectionStyle = { minHeight: bottomSectionHeight, height: bottomSectionHeight };
+  const bottomSectionClassName = "w-full relative z-10";
+  const previewFrameStyle = { width: '100%', aspectRatio: `${imageMetadata.width || 1} / ${imageMetadata.height || 1}` };
+  const nodeContainerStyle = { minHeight: nodeMinHeight, width: nodeWidth, '--loader-color': '#10b981' };
+  const nodeContainerClassName = `
+        nowheel group flex flex-col flex-1
+        rounded-2xl border-2 relative transition-all duration-300 ease-in-out 
+        ${selected 
+          ? "border-emerald-600 shadow-[0_0_25px_rgba(16,185,129,0.3)] scale-[1.02] ring-1 ring-emerald-500/20" 
+          : "border-zinc-800 hover:border-zinc-700 shadow-lg"} 
+        bg-[#0c0d0f]/95 backdrop-blur-sm
+      `;
+  const previewSectionClassName = "flex items-start justify-center w-full px-2 pt-2 pb-0 rounded-b-2xl transition-all duration-500 overflow-hidden";
+  const previewContainerClassName = "relative group/image flex items-center justify-center bg-white rounded-md overflow-hidden max-w-full mx-auto";
+  const previewWrapperClassName = "h-full w-full flex items-center justify-center bg-white overflow-hidden";
+  const previewImageClassName = "w-full h-full object-contain animate-in fade-in duration-500";
+  const previewImageStyleFinal = undefined;
+  const previewOverlayClassName = "absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black/70 via-black/25 to-transparent opacity-0 group-hover/image:opacity-100 transition-opacity duration-300 pointer-events-none flex flex-col justify-end";
+  const previewIndicatorsClassName = "absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1 z-10";
+  const previewLoadingClassName = "flex items-center justify-center w-full h-full overflow-hidden bg-white/5 animate-pulse rounded-xl";
+  const previewErrorClassName = "text-red-400 text-xs font-medium p-3 bg-red-500/10 rounded-xl border border-red-500/20 m-3 w-full";
+  const outputEmptyClassName = "flex flex-col items-center justify-center text-zinc-400 gap-2";
+
   useEffect(() => {
     const timeout = setTimeout(() => {
       const validHandles = [
@@ -307,6 +357,7 @@ const ImageGeneration = ({ id, data, selected }) => {
         hasImageUrl && "imageInput3",
         hasReferenceImage && "imageInput4",
         hasImagesList && "imageInput2",
+        ...referenceHandles.map((handle) => handle.id),
       ].filter(Boolean);
 
       setEdges((prevEdges) =>
@@ -321,7 +372,7 @@ const ImageGeneration = ({ id, data, selected }) => {
 
   useEffect(() => {
     const connectedInputs = {};
-    inputHandles.forEach((h) => {
+    [...inputHandles, ...referenceHandles.map((handle) => handle.id)].forEach((h) => {
       connectedInputs[h] = edges.some(
         (e) => e.target === id && e.targetHandle === h
       );
@@ -457,15 +508,8 @@ const ImageGeneration = ({ id, data, selected }) => {
 
   return (
     <div 
-      style={{ minHeight: 220, '--loader-color': '#10b981' }} 
-      className={`
-        nowheel group flex flex-col flex-1 w-80 
-        rounded-2xl border-2 relative transition-all duration-300 ease-in-out 
-        ${selected 
-          ? "border-emerald-600 shadow-[0_0_25px_rgba(16,185,129,0.3)] scale-[1.02] ring-1 ring-emerald-500/20" 
-          : "border-zinc-800 hover:border-zinc-700 shadow-lg"} 
-        bg-[#0c0d0f]/95 backdrop-blur-sm
-      `}
+      style={nodeContainerStyle} 
+      className={nodeContainerClassName}
     >
       {data.isLoading && (
         <div className="loader-border" />
@@ -499,7 +543,7 @@ const ImageGeneration = ({ id, data, selected }) => {
             </h3>
           </div>
           {outputHistory.length > 0 && (
-            <div className="absolute -top-10 right-0 bg-[#0c0d0f]/95 flex items-center gap-1 p-1 border border-white/10 rounded-full ml-auto">
+            <div className="absolute -top-12 right-0 bg-[#0c0d0f]/95 flex items-center gap-1 p-1 border border-white/10 rounded-full ml-auto">
               <button 
                 type="button"
                 suppressHydrationWarning={true}
@@ -560,20 +604,20 @@ const ImageGeneration = ({ id, data, selected }) => {
           <UploadNode id={id} data={data} formValues={formValues} setFormValues={setFormValues} selectedModel={selectedModel} loading={loading} uploadType="upload" acceptType="image" />
         </div>
       ) : (
-        <div className="flex items-center flex-grow justify-center w-full h-full rounded transition-all duration-500">
+        <div className={previewSectionClassName} style={outputSectionStyle}>
           {data.isLoading ? (
-            <div className="flex items-center justify-center w-full h-full overflow-hidden aspect-[1/1] bg-white/5 animate-pulse rounded-b-2xl">
+            <div className={previewLoadingClassName}>
               <div className="flex flex-col items-center gap-3">
                 <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
                 <span className="text-[10px] font-bold text-emerald-500 tracking-wider uppercase">Generating...</span>
               </div>
             </div>
           ) : data.errorMsg ? (
-            <div className="text-red-400 text-xs font-medium p-3 bg-red-500/10 rounded-xl border border-red-500/20 m-3 w-full">
+            <div className={previewErrorClassName}>
               {data.errorMsg || "Generation failed"}
             </div>
           ) : currentOutput && !data.isLoading ? (
-            <div className="h-full w-full relative group/image">
+            <div className={previewContainerClassName} style={previewFrameStyle}>
               {currentOutputList.length > 1 && (
                 <>
                   <button
@@ -600,13 +644,14 @@ const ImageGeneration = ({ id, data, selected }) => {
                   </button>
                 </>
               )}
-              <img
+              <div className={previewWrapperClassName}><img
                 key={currentOutput}
                 src={currentOutput}
                 alt="Generated"
-                className="w-full h-full object-contain rounded-b-xl animate-in fade-in duration-500"
-              />
-              <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-black/80 via-black/40 to-transparent opacity-0 group-hover/image:opacity-100 transition-opacity duration-300 pointer-events-none rounded-b-xl flex flex-col justify-end">
+                className={previewImageClassName}
+                style={previewImageStyleFinal}
+              /></div>
+              <div className={previewOverlayClassName}>
                 <div className="flex items-center justify-between">
                   <div className="flex flex-col gap-0.5">
                     <span className="text-[10px] text-white/50 uppercase tracking-tighter font-semibold">Dimensions</span>
@@ -623,7 +668,7 @@ const ImageGeneration = ({ id, data, selected }) => {
                 </div>
               </div>
               {currentOutputList.length > 1 && (
-                <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1 z-10">
+                <div className={previewIndicatorsClassName}>
                   {currentOutputList.map((_, idx) => (
                     <div
                       key={idx}
@@ -636,7 +681,7 @@ const ImageGeneration = ({ id, data, selected }) => {
               )}
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center text-zinc-400 gap-2">
+            <div className={outputEmptyClassName}>
               <IoImageOutline size={32} />
               <span className="text-[10px] italic">Result appeared here...</span>
             </div>
@@ -676,100 +721,73 @@ const ImageGeneration = ({ id, data, selected }) => {
         </p>
       )}
       
-      <Handle 
-        type="target" 
-        position={Position.Left} 
-        id="imageInput2" 
-        style={{ 
-          top: 150,
-          opacity: hasImagesList ? 1 : 0,
-          pointerEvents: hasImagesList ? 'auto' : 'none',
-          width: 12,
-          height: 12,
-          transition: 'all 0.2s ease-in-out',
-        }} 
-        className={`!rounded-full !border-[3px] !left-[-8px] transition-all
-          ${connectedInputs.imageInput2 
-            ? '!bg-emerald-600 !border-zinc-900 shadow-[0_0_15px_rgba(16,185,129,0.8)]' 
-            : '!bg-zinc-900 !border-emerald-600/50 hover:!border-emerald-600 shadow-sm'
-          }
-        `}
-        data-type="green"
-      />
-      {hasImagesList && (
-        <p 
-          className={`absolute -left-10 top-[150px] text-xs text-green-500 transition-opacity duration-200 ${
-            data.activeHandleColor === "green"
-              ? "opacity-100" 
-              : "opacity-0 group-hover:opacity-100"
-          }`}
-        > 
-          Image 
-        </p>
+      {hasReferenceImages && referenceHandles.map((handle) => (
+        <React.Fragment key={handle.id}>
+          <Handle
+            type="target"
+            position={Position.Left}
+            id={handle.id}
+            style={{
+              top: handle.top,
+              opacity: 1,
+              pointerEvents: 'auto',
+              width: 12,
+              height: 12,
+              transition: 'all 0.2s ease-in-out',
+            }}
+            className={`!rounded-full !border-[3px] !left-[-8px] transition-all
+              ${handle.connected
+                ? '!bg-emerald-600 !border-zinc-900 shadow-[0_0_15px_rgba(16,185,129,0.8)]'
+                : '!bg-zinc-900 !border-emerald-600/50 hover:!border-emerald-600 shadow-sm'
+              }
+            `}
+            data-type="green"
+          />
+          <p
+            className={`absolute -left-14 text-xs text-green-500 transition-opacity duration-200 ${
+              data.activeHandleColor === "green"
+                ? "opacity-100"
+                : "opacity-0 group-hover:opacity-100"
+            }`}
+            style={{ top: `${handle.top}px` }}
+          >
+            {handle.label}
+          </p>
+        </React.Fragment>
+      ))}
+      {hasReferenceImages && (
+        <div className={bottomSectionClassName} style={bottomSectionStyle}>
+          <div className="px-2.5 pb-2 pt-1 bg-[#0c0d0f]/95 flex items-center justify-between gap-2 rounded-b-2xl border-t border-zinc-900/80">
+            <button
+              type="button"
+              suppressHydrationWarning={true}
+              onClick={(e) => {
+                e.stopPropagation();
+                setFormValues((prev) => ({
+                  ...prev,
+                  images_list: [...(Array.isArray(prev.images_list) ? prev.images_list : []), ""],
+                }));
+                setTimeout(() => updateNodeInternals(id), 0);
+              }}
+              className="min-w-0 flex-1 truncate text-left text-[10px] text-zinc-400 hover:text-white transition-colors"
+            >
+              + Add another image input
+            </button>
+            <button
+              type="button"
+              suppressHydrationWarning={true}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleRunSingleNode();
+              }}
+              className="shrink-0 px-2 py-1 rounded-md border border-white/10 bg-black/35 text-white text-[10px] font-medium hover:bg-white hover:text-black transition-colors whitespace-nowrap"
+            >
+              → Run Model
+            </button>
+          </div>
+        </div>
       )}
-      
-      <Handle 
-        type="target" 
-        position={Position.Left} 
-        id="imageInput3" 
-        style={{ 
-          top: 200,
-          opacity: hasImageUrl ? 1 : 0,
-          pointerEvents: hasImageUrl ? 'auto' : 'none',
-          width: 12,
-          height: 12,
-          transition: 'all 0.2s ease-in-out',
-        }} 
-        className={`!rounded-full !border-[3px] !left-[-8px] transition-all
-          ${connectedInputs.imageInput3 
-            ? '!bg-emerald-600 !border-zinc-900 shadow-[0_0_15px_rgba(16,185,129,0.8)]' 
-            : '!bg-zinc-900 !border-emerald-600/50 hover:!border-emerald-600 shadow-sm'
-          }
-        `}
-        data-type="green"
-      />
-      {hasImageUrl && (
-        <p
-          className={`absolute -left-10 top-[200px] text-xs text-green-500 transition-opacity duration-200 ${
-            data.activeHandleColor === "green"
-              ? "opacity-100"
-              : "opacity-0 group-hover:opacity-100"
-          }`}
-        >
-          Image
-        </p>
-      )}
-      <Handle
-        type="target"
-        position={Position.Left}
-        id="imageInput4"
-        style={{
-          top: 250,
-          opacity: hasReferenceImage ? 1 : 0,
-          pointerEvents: hasReferenceImage ? 'auto' : 'none',
-          width: 12,
-          height: 12,
-          transition: 'all 0.2s ease-in-out',
-        }}
-        className={`!rounded-full !border-[3px] !left-[-8px] transition-all
-          ${connectedInputs.imageInput4
-            ? '!bg-emerald-600 !border-zinc-900 shadow-[0_0_15px_rgba(16,185,129,0.8)]'
-            : '!bg-zinc-900 !border-emerald-600/50 hover:!border-emerald-600 shadow-sm'
-          }
-        `}
-        data-type="green"
-      />
-      {hasReferenceImage && (
-        <p
-          className={`absolute -left-18 top-[250px] text-xs text-green-500 transition-opacity duration-200 ${
-            data.activeHandleColor === "green"
-              ? "opacity-100"
-              : "opacity-0 group-hover:opacity-100"
-          }`}
-        >
-          Ref Img
-        </p>
-      )}
+
       <Handle
         type="source" 
         position={Position.Right} 

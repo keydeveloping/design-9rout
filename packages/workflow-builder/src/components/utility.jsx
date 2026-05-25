@@ -645,17 +645,146 @@ export const concatModels = [
     name: "Prompt Concatenator",
     input_params: {
       properties: {
-        "prompt": {
-          "examples": [
-            ""
-          ],
-          "description": "Text prompt describing the image.",
-          "type": "string",
-          "title": "Prompt",
-          "name": "prompt"
+        prompt: {
+          examples: [""],
+          description: "Primary instruction or text input.",
+          type: "string",
+          title: "Prompt",
+          name: "prompt"
+        },
+        context_2: {
+          examples: [""],
+          description: "Additional text input.",
+          type: "string",
+          title: "Context 2",
+          name: "context_2"
+        },
+        context_3: {
+          examples: [""],
+          description: "Additional text input.",
+          type: "string",
+          title: "Context 3",
+          name: "context_3"
+        },
+        context_4: {
+          examples: [""],
+          description: "Additional text input.",
+          type: "string",
+          title: "Context 4",
+          name: "context_4"
+        },
+        image_url: {
+          examples: [""],
+          description: "Optional image input for vision analysis.",
+          field: "image",
+          type: "string",
+          title: "Image URL",
+          name: "image_url"
+        },
+        system_prompt: {
+          examples: [""],
+          description: "Optional system instruction for the LLM.",
+          type: "string",
+          title: "System Prompt",
+          name: "system_prompt"
+        },
+        mode: {
+          enum: ["rewrite", "concat", "vision_json", "extract_image_prompt", "extract_video_prompt"],
+          type: "string",
+          title: "Mode",
+          name: "mode",
+          default: "rewrite",
+          description: "Prompt processing mode."
+        },
+        llm_model: {
+          examples: ["openai/gpt-4o"],
+          description: "Model id for prompt rewrite/extract tasks.",
+          type: "string",
+          title: "LLM Model",
+          name: "llm_model",
+          default: "openai/gpt-4o"
+        },
+        vision_model: {
+          examples: ["openai/gpt-4o"],
+          description: "Model id for image-to-text vision tasks.",
+          type: "string",
+          title: "Vision Model",
+          name: "vision_model",
+          default: "openai/gpt-4o"
+        },
+        temperature: {
+          description: "LLM temperature.",
+          type: "number",
+          title: "Temperature",
+          name: "temperature",
+          default: 0.2
         }
       },
       required: ["prompt"],
+    }
+  },
+  {
+    id: "array-separator",
+    name: "Array Separator",
+    input_params: {
+      properties: {
+        text: {
+          examples: [""],
+          description: "Text to split into items.",
+          type: "string",
+          title: "Text",
+          name: "text"
+        },
+        separator: {
+          examples: ["\n", "|", ","],
+          description: "Separator used to split text.",
+          type: "string",
+          title: "Separator",
+          name: "separator",
+          default: "\n"
+        },
+        trim_items: {
+          description: "Trim whitespace around each item.",
+          type: "boolean",
+          title: "Trim Items",
+          name: "trim_items",
+          default: true
+        },
+        remove_empty: {
+          description: "Remove empty items after split.",
+          type: "boolean",
+          title: "Remove Empty",
+          name: "remove_empty",
+          default: true
+        }
+      },
+      required: ["text"],
+    }
+  },
+  {
+    id: "list",
+    name: "List",
+    input_params: {
+      properties: {
+        items: {
+          description: "List of text items.",
+          type: "array",
+          title: "Items",
+          name: "items",
+          default: [],
+          items: {
+            type: "string"
+          }
+        },
+        selected_index: {
+          description: "Selected item index.",
+          type: "number",
+          title: "Selected Index",
+          name: "selected_index",
+          default: 0
+        }
+      },
+      required: ["items"],
     }
   }
 ];

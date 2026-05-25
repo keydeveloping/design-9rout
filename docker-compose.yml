@@ -34,6 +34,7 @@ services:
       NINEROUTER_URL: ${NINEROUTER_URL:-http://host.docker.internal:20128}
       NINEROUTER_KEY: ${NINEROUTER_KEY:-}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+      ALLOW_LOCAL_REFERENCE_IMAGES: ${ALLOW_LOCAL_REFERENCE_IMAGES:-true}
       DATA_DIR: /home/appuser/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
