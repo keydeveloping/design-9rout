@@ -1,29 +1,35 @@
-# Vibe Workflow
+# KeyWorkflow
 
-Open-source node-based AI workflow builder for image, video, audio, and text pipelines.
+KeyWorkflow is a self-hosted, node-based AI workflow builder for composing image, video, audio, and text generation pipelines.
 
-Project sekarang berjalan sebagai monorepo dengan:
-- `client/` — Next.js app
-- `packages/workflow-builder/` — shared workflow editor library
-- `server/` — FastAPI backend
+It provides a visual workflow editor, a FastAPI backend, and a 9router-compatible runtime integration for model execution.
 
-## Current Stack
+## Features
 
-- Frontend: Next.js 16 + React 19
-- Workflow UI: React Flow
-- Backend: FastAPI + Uvicorn
-- AI runtime: 9router-compatible API via `NINEROUTER_URL`
-- Packaging: npm workspaces
-- Container runtime: Docker Compose
+- Node-based workflow editor powered by React Flow
+- Image, video, audio, text, and utility workflow nodes
+- Prompt concatenation, array separator, and list item selector utilities
+- Self-hostable FastAPI backend
+- 9router-compatible model runtime via `NINEROUTER_URL`
+- Docker Compose support for local deployment
+
+## Tech Stack
+
+- Frontend: Next.js 16, React 19
+- Workflow builder: React Flow shared package
+- Backend: FastAPI, Uvicorn
+- Runtime: 9router-compatible API
+- Package manager: npm workspaces
+- Containers: Docker Compose
 
 ## Project Structure
 
 ```text
 .
-├── client/
+├── client/                       # Next.js frontend app
 ├── packages/
-│   └── workflow-builder/
-├── server/
+│   └── workflow-builder/          # Shared node editor package
+├── server/                        # FastAPI backend
 ├── docker-compose.yml
 ├── .env.example
 └── package.json
@@ -31,28 +37,28 @@ Project sekarang berjalan sebagai monorepo dengan:
 
 ## Requirements
 
-Local development:
+### Local Development
+
 - Node.js 20+
 - npm 7+
 - Python 3.10+
 - Running 9router endpoint
 
-Docker:
+### Docker
+
 - Docker
 - Docker Compose v2
-- Running 9router endpoint reachable from container
+- Running 9router endpoint reachable from containers
 
 ## Environment Variables
 
-### Root `.env` for Docker Compose
+### Root `.env`
 
-Copy:
+Used by Docker Compose.
 
 ```bash
 cp .env.example .env
 ```
-
-Current variables:
 
 ```env
 NINEROUTER_URL=http://host.docker.internal:20128
@@ -61,22 +67,14 @@ PUBLIC_BASE_URL=http://localhost:8000
 ALLOW_LOCAL_REFERENCE_IMAGES=true
 ```
 
-Meaning:
-- `NINEROUTER_URL` — base URL for 9router runtime
-- `NINEROUTER_KEY` — auth key for 9router if needed
-- `PUBLIC_BASE_URL` — public/backend base URL used when generated files are returned
-- `ALLOW_LOCAL_REFERENCE_IMAGES` — allow local/private image URLs for local dev
-
 ### Backend `server/.env`
 
-Copy:
+Used when running the backend directly.
 
 ```bash
 cd server
 cp .env.example .env
 ```
-
-Current variables:
 
 ```env
 NINEROUTER_URL=http://localhost:20128
@@ -85,22 +83,27 @@ PUBLIC_BASE_URL=http://127.0.0.1:8000
 ALLOW_LOCAL_REFERENCE_IMAGES=true
 ```
 
+### Variable Reference
+
+| Variable | Description |
+|---|---|
+| `NINEROUTER_URL` | Base URL for the 9router-compatible runtime |
+| `NINEROUTER_KEY` | Optional auth key for runtime requests |
+| `PUBLIC_BASE_URL` | Public/backend base URL used for generated files |
+| `ALLOW_LOCAL_REFERENCE_IMAGES` | Allows local/private reference image URLs during local development |
+| `DATA_DIR` | Backend data directory; set by Docker to `/home/appuser/data` |
+
 ## Install Dependencies
 
-From repo root:
+From repository root:
 
 ```bash
 npm install
 ```
 
-This installs workspace dependencies for:
-- `client`
-- `packages/workflow-builder`
-- `server`-adjacent JS tooling if present
-
 ## Run Locally
 
-### 1. Start backend
+### 1. Start Backend
 
 ```bash
 cd server
@@ -111,26 +114,29 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Backend default URL:
+Backend:
 - `http://localhost:8000`
 
 Health endpoint:
 - `http://localhost:8000/api/health`
 
-### 2. Start frontend
+API docs:
+- `http://localhost:8000/docs`
 
-From repo root:
+### 2. Start Frontend
+
+From repository root:
 
 ```bash
 npm run dev:app
 ```
 
-Frontend default URL:
+Frontend:
 - `http://localhost:3000`
 
-### 3. Rebuild workflow builder library after UI changes
+### 3. Rebuild Workflow Builder After UI Changes
 
-If you edit files under `packages/workflow-builder`, rebuild the shared library:
+If you change files under `packages/workflow-builder`, rebuild the shared package:
 
 ```bash
 npm run build:lib
@@ -138,74 +144,58 @@ npm run build:lib
 
 ## Run With Docker
 
-### 1. Configure env
-
-From repo root:
+### 1. Configure Environment
 
 ```bash
 cp .env.example .env
 ```
 
-Update at least:
-- `NINEROUTER_URL`
-- `NINEROUTER_KEY`
+Update runtime values in `.env`:
 
-### 2. Start services
+```env
+NINEROUTER_URL=http://host.docker.internal:20128
+NINEROUTER_KEY=your_9router_key_here
+```
+
+### 2. Start Services
 
 ```bash
 docker compose up --build
 ```
 
-Available services:
-- Frontend: `http://localhost:3000`
-- Backend: `http://localhost:8000`
-- API docs: `http://localhost:8000/docs`
+Services:
 
-### 3. Stop services
+| Service | URL |
+|---|---|
+| Frontend | `http://localhost:3000` |
+| Backend | `http://localhost:8000` |
+| API docs | `http://localhost:8000/docs` |
+
+### 3. Stop Services
 
 ```bash
 docker compose down
 ```
 
-## Current Docker Services
+## npm Scripts
 
-| Service | Port | Notes |
-|---|---:|---|
-| `client` | 3000 | Next.js production container |
-| `server` | 8000 | FastAPI container |
-
-Backend container uses:
-- `DATA_DIR=/home/appuser/data`
-- `PUBLIC_BASE_URL` from compose env
-- `host.docker.internal` mapping for local 9router access
-
-## Notes About 9router
-
-This project no longer uses MuAPI env setup described in older docs. Current runtime depends on:
-- `NINEROUTER_URL`
-- `NINEROUTER_KEY`
-
-If reference-image workflows fail with public-host errors:
-- set correct `PUBLIC_BASE_URL`
-- or keep `ALLOW_LOCAL_REFERENCE_IMAGES=true` for local-only development
-
-## Useful Commands
-
-From repo root:
+From repository root:
 
 ```bash
-npm run dev:app
-npm run build:app
-npm run build:lib
-npm run install:all
+npm run dev:app       # Start Next.js frontend
+npm run build:app     # Build Next.js frontend
+npm run build:lib     # Build workflow-builder package
+npm run install:all   # Install workspace dependencies
 ```
 
 ## Development Notes
 
-- Workflow editor code lives in `packages/workflow-builder/src/components`
-- After workflow-builder edits, rebuild library with `npm run build:lib`
-- Backend stores runtime/generated data under `DATA_DIR`
-- Do not commit `server/data/`
+- Workflow editor components live in `packages/workflow-builder/src/components`.
+- Rebuild `workflow-builder` after editor changes with `npm run build:lib`.
+- Runtime/generated backend data lives under `DATA_DIR`.
+- Do not commit `server/data/` or local secrets.
+- For local image-reference workflows, keep `ALLOW_LOCAL_REFERENCE_IMAGES=true`.
+- For public/provider execution, set `PUBLIC_BASE_URL` to a reachable public URL.
 
 ## License
 
