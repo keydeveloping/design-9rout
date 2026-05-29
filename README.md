@@ -89,9 +89,16 @@ ALLOW_LOCAL_REFERENCE_IMAGES=true
 |---|---|
 | `NINEROUTER_URL` | Base URL for the 9router-compatible runtime |
 | `NINEROUTER_KEY` | Optional auth key for runtime requests |
-| `PUBLIC_BASE_URL` | Public/backend base URL used for generated files |
+| `PUBLIC_BASE_URL` | Public/backend base URL used for local generated files |
 | `ALLOW_LOCAL_REFERENCE_IMAGES` | Allows local/private reference image URLs during local development |
 | `DATA_DIR` | Backend data directory; set by Docker to `/home/appuser/data` |
+| `STORAGE_BACKEND` | `local` or `minio`/`s3` |
+| `S3_ENDPOINT_URL` | MinIO/S3 endpoint URL |
+| `S3_ACCESS_KEY_ID` | MinIO/S3 access key |
+| `S3_SECRET_ACCESS_KEY` | MinIO/S3 secret key |
+| `S3_BUCKET` | Bucket for generated/uploaded files |
+| `S3_PUBLIC_BASE_URL` | Optional public base URL if you intentionally use public objects |
+| `S3_PRESIGNED_EXPIRES_SECONDS` | Expiry for signed download URLs when bucket stays private |
 
 ## Install Dependencies
 
@@ -163,6 +170,10 @@ NINEROUTER_KEY=your_9router_key_here
 docker compose up --build
 ```
 
+This also starts MinIO:
+- S3 API: `http://localhost:9000`
+- Console: `http://localhost:9001`
+
 Services:
 
 | Service | URL |
@@ -195,7 +206,10 @@ npm run install:all   # Install workspace dependencies
 - Runtime/generated backend data lives under `DATA_DIR`.
 - Do not commit `server/data/` or local secrets.
 - For local image-reference workflows, keep `ALLOW_LOCAL_REFERENCE_IMAGES=true`.
-- For public/provider execution, set `PUBLIC_BASE_URL` to a reachable public URL.
+- For public/provider execution, set `PUBLIC_BASE_URL` or `S3_PUBLIC_BASE_URL` to a reachable public URL.
+- To store generated/uploaded files in MinIO, set `STORAGE_BACKEND=minio` and configure the `S3_*` variables.
+- With private MinIO buckets, KeyWorkflow returns stable backend URLs under `/api/app/object/{key}` and redirects downloads to short-lived signed URLs.
+- If using remote providers, `PUBLIC_BASE_URL` must be reachable from the provider because provider requests will follow the backend object URL redirect.
 
 ## License
 

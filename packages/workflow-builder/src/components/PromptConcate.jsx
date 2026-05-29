@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Handle, Position, useReactFlow, useStore, useUpdateNodeInternals } from "reactflow";
 import axios from "axios";
 import { FaAngleLeft, FaAngleRight } from "react-icons/fa6";
@@ -12,11 +12,10 @@ import NodeOptionsMenu from "./NodeOptionsMenu";
 import NodeSendButton from "./NodeSendButton";
 import { useGenerationCost } from "./useGenerationCost";
 
-const inputHandles = ["concatInput", "concatInput4", "concatImageInput"];
 const outputHandles = ["concatOutput"];
 
 const initializeFormData = (schemaProperties) => Object.entries(schemaProperties || {}).reduce((acc, [fieldName, fieldSchema]) => {
-  if (fieldSchema.type === "array") acc[fieldName] = fieldSchema.examples || [];
+  if (fieldSchema.type === "array") acc[fieldName] = fieldSchema.default || fieldSchema.examples || [];
   else if (fieldSchema.type === "object") acc[fieldName] = initializeFormData(fieldSchema.properties || {});
   else if (fieldSchema.default !== undefined) acc[fieldName] = fieldSchema.default;
   else if (fieldSchema.examples?.length > 0) acc[fieldName] = fieldSchema.examples[0];
@@ -25,6 +24,14 @@ const initializeFormData = (schemaProperties) => Object.entries(schemaProperties
   else acc[fieldName] = "";
   return acc;
 }, {});
+
+const getConcatImageRefHandle = (index) => `concatImageInputRef-${index}`;
+const isConcatImageReferenceHandle = (handleId) => typeof handleId === "string" && handleId.startsWith("concatImageInputRef-");
+const getConcatImageReferenceIndex = (handleId) => {
+  if (!isConcatImageReferenceHandle(handleId)) return -1;
+  const parsed = Number.parseInt(handleId.split("-").pop(), 10);
+  return Number.isNaN(parsed) ? -1 : parsed;
+};
 
 const PromptConcate = ({ id, data, selected }) => {
   const [selectedModel, setSelectedModel] = useState(data.selectedModel || concatModels[0]);
@@ -54,13 +61,29 @@ const PromptConcate = ({ id, data, selected }) => {
     ? currentOutput
     : currentOutput ? JSON.stringify(currentOutput, null, 2) : "";
 
-  const concatInputConfigs = [
-    { id: "concatInput", field: "prompt", label: "Prompt", color: "blue", top: 120 },
-    { id: "concatInput4", field: "system_prompt", label: "System Prompt", color: "blue", top: 158 },
-    { id: "concatImageInput", field: "image_url", label: "Image", color: "green", top: 198 },
-  ];
-  const inputLabelColumnClass = "right-[calc(100%+16px)] w-24 text-right";
-  const activeConcatInputs = concatInputConfigs.filter((input) => properties && input.field in properties);
+  const additionalImageCount = useMemo(() => {
+    const list = Array.isArray(formValues.image_urls) ? formValues.image_urls : [];
+    return Math.max(1, list.length || 0);
+  }, [JSON.stringify(formValues.image_urls || [])]);
+
+  const concatInputConfigs = useMemo(() => {
+    const baseInputs = [
+      { id: "concatInput", field: "prompt", label: "Prompt", color: "blue", top: 120 },
+      { id: "concatInput4", field: "system_prompt", label: "System Prompt", color: "blue", top: 158 },
+      { id: "concatImageInput", field: "image_url", label: "Image Input", color: "green", top: 198 },
+    ];
+    const extraImageInputs = Array.from({ length: additionalImageCount }, (_, index) => ({
+      id: getConcatImageRefHandle(index),
+      field: "image_urls",
+      label: `Image Input ${index + 2}`,
+      color: "green",
+      top: 236 + (index * 38),
+    }));
+    return [...baseInputs, ...extraImageInputs];
+  }, [additionalImageCount]);
+
+  const inputHandles = concatInputConfigs.map((input) => input.id);
+  const inputLabelColumnClass = "right-[calc(100%+16px)] w-28 text-right";
 
   useEffect(() => {
     const defaults = initializeFormData(properties);
@@ -69,7 +92,9 @@ const PromptConcate = ({ id, data, selected }) => {
       if (validKeys.includes(key)) acc[key] = val;
       return acc;
     }, {});
-    setFormValues({ ...defaults, ...filteredFormValues });
+    const nextFormValues = { ...defaults, ...filteredFormValues };
+    if (!Array.isArray(nextFormValues.image_urls)) nextFormValues.image_urls = [];
+    setFormValues(nextFormValues);
   }, [selectedModel.id, schemaModel]);
 
   useEffect(() => {
@@ -86,7 +111,7 @@ const PromptConcate = ({ id, data, selected }) => {
 
   useEffect(() => {
     updateNodeInternals(id);
-  }, [formValues, id, activeConcatInputs.map((input) => `${input.id}:${input.top}`).join("|")]);
+  }, [formValues, id, concatInputConfigs.map((input) => `${input.id}:${input.top}`).join("|")]);
 
   useEffect(() => {
     if (!data.formValues) return;
@@ -112,25 +137,32 @@ const PromptConcate = ({ id, data, selected }) => {
   }, [displayValue]);
 
   useEffect(() => {
-    const connectedInputs = {};
+    const nextConnectedInputs = {};
     inputHandles.forEach((handle) => {
-      connectedInputs[handle] = edges.some((e) => e.target === id && e.targetHandle === handle);
+      nextConnectedInputs[handle] = edges.some((e) => e.target === id && e.targetHandle === handle);
     });
-    const connectedOutputs = {};
+    const nextConnectedOutputs = {};
     outputHandles.forEach((handle) => {
-      connectedOutputs[handle] = edges.some((e) => e.source === id && e.sourceHandle === handle);
+      nextConnectedOutputs[handle] = edges.some((e) => e.source === id && e.sourceHandle === handle);
     });
-    setConnectedInputs(connectedInputs);
-    setConnectedOutputs(connectedOutputs);
-  }, [edges, id]);
+    setConnectedInputs(nextConnectedInputs);
+    setConnectedOutputs(nextConnectedOutputs);
+  }, [edges, id, inputHandles.join("|")]);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
-      const validHandles = activeConcatInputs.map((input) => input.id);
+      const validHandles = concatInputConfigs.map((input) => input.id);
       setEdges((prevEdges) => prevEdges.filter((edge) => edge.target !== id || validHandles.includes(edge.targetHandle)));
     }, 2000);
     return () => clearTimeout(timeout);
-  }, [activeConcatInputs.map((input) => input.id).join("|"), id, setEdges]);
+  }, [concatInputConfigs.map((input) => input.id).join("|"), id, setEdges]);
+
+  const handleAddImageInput = () => {
+    setFormValues((prev) => ({
+      ...prev,
+      image_urls: [...(Array.isArray(prev.image_urls) ? prev.image_urls : []), ""],
+    }));
+  };
 
   const pollNodeStatus = (run_id) => {
     const interval = setInterval(() => {
@@ -246,7 +278,7 @@ const PromptConcate = ({ id, data, selected }) => {
 
   return (
     <div
-      style={{ minHeight: 280, '--loader-color': '#2563eb' }}
+      style={{ minHeight: 280 + (additionalImageCount * 38), '--loader-color': '#2563eb' }}
       className={`nowheel group flex flex-col flex-1 w-80 rounded-2xl border-2 relative transition-all duration-300 ease-in-out ${selected ? "border-blue-600 shadow-[0_0_25px_rgba(37,99,235,0.3)] ring-1 ring-blue-500/20" : "border-zinc-800 hover:border-zinc-700 shadow-lg"} bg-[#0c0d0f]/95 backdrop-blur-sm`}
     >
       {data.isLoading && <div className="loader-border" />}
@@ -283,7 +315,15 @@ const PromptConcate = ({ id, data, selected }) => {
             className="w-full min-h-[210px] max-h-96 text-xs leading-relaxed outline-none bg-transparent resize-none text-zinc-100 font-medium placeholder:italic placeholder:opacity-50 custom-scrollbar"
           />
         </div>
-        <div className="flex items-center justify-end">
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            suppressHydrationWarning={true}
+            onClick={handleAddImageInput}
+            className="text-xs text-zinc-400 hover:text-white transition-colors"
+          >
+            + Add another image input
+          </button>
           <button
             type="button"
             suppressHydrationWarning={true}
@@ -294,7 +334,7 @@ const PromptConcate = ({ id, data, selected }) => {
           </button>
         </div>
       </div>
-      {activeConcatInputs.map((input) => (
+      {concatInputConfigs.map((input) => (
         <React.Fragment key={input.id}>
           <Handle
             type="target"

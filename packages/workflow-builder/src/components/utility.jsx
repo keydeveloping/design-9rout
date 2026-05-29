@@ -652,26 +652,12 @@ export const concatModels = [
           title: "Prompt",
           name: "prompt"
         },
-        context_2: {
+        system_prompt: {
           examples: [""],
-          description: "Additional text input.",
+          description: "Optional system instruction for the LLM.",
           type: "string",
-          title: "Context 2",
-          name: "context_2"
-        },
-        context_3: {
-          examples: [""],
-          description: "Additional text input.",
-          type: "string",
-          title: "Context 3",
-          name: "context_3"
-        },
-        context_4: {
-          examples: [""],
-          description: "Additional text input.",
-          type: "string",
-          title: "Context 4",
-          name: "context_4"
+          title: "System Prompt",
+          name: "system_prompt"
         },
         image_url: {
           examples: [""],
@@ -681,12 +667,15 @@ export const concatModels = [
           title: "Image URL",
           name: "image_url"
         },
-        system_prompt: {
-          examples: [""],
-          description: "Optional system instruction for the LLM.",
-          type: "string",
-          title: "System Prompt",
-          name: "system_prompt"
+        image_urls: {
+          examples: [],
+          description: "Additional image inputs for vision analysis.",
+          field: "images_list",
+          type: "array",
+          title: "Image URLs",
+          name: "image_urls",
+          default: [],
+          items: { type: "string" }
         },
         mode: {
           enum: ["rewrite", "concat", "vision_json", "extract_image_prompt", "extract_video_prompt"],

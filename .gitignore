@@ -38,6 +38,9 @@ venv/
 env/
 ENV/
 
+# Runtime data
+server/data/
+
 # IDEs
 .vscode/
 .idea/

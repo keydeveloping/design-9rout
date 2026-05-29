@@ -5,4 +5,5 @@ asyncpg
 httpx
 python-dotenv
 python-multipart
+boto3
 ruff

@@ -132,10 +132,17 @@ const builderDefaultEdgeOptions = defaultEdgeOptions;
 const builderConnectionLineType = ConnectionLineType.Bezier;
 
 const isImageReferenceHandle = (handle) => handle === "imageInput2" || handle?.startsWith("imageInputRef-");
+const isConcatImageReferenceHandle = (handle) => handle?.startsWith("concatImageInputRef-");
 
 const getImageReferenceIndex = (handle) => {
   if (!handle?.startsWith("imageInputRef-")) return -1;
   const index = Number.parseInt(handle.replace("imageInputRef-", ""), 10);
+  return Number.isNaN(index) ? -1 : index;
+};
+
+const getConcatImageReferenceIndex = (handle) => {
+  if (!handle?.startsWith("concatImageInputRef-")) return -1;
+  const index = Number.parseInt(handle.replace("concatImageInputRef-", ""), 10);
   return Number.isNaN(index) ? -1 : index;
 };
 
@@ -148,6 +155,85 @@ const setImageReferenceAtIndex = (list, index, value) => {
   while (next.length <= index) next.push("");
   next[index] = value || "";
   return next;
+};
+
+const setConcatImageReferenceAtIndex = (list, index, value) => {
+  const next = Array.isArray(list) ? [...list] : [];
+  while (next.length <= index) next.push("");
+  next[index] = value || "";
+  return next;
+};
+
+const getPromptConcatImageHandles = (formValues = {}) => {
+  const count = Math.max(1, Array.isArray(formValues?.image_urls) ? formValues.image_urls.length : 0);
+  return Array.from({ length: count }, (_, index) => `concatImageInputRef-${index}`);
+};
+
+const getPromptConcatValidHandles = (formValues = {}) => [
+  "prompt" in formValues && "concatInput",
+  "system_prompt" in formValues && "concatInput4",
+  "image_url" in formValues && "concatImageInput",
+  ...(Array.isArray(formValues?.image_urls) ? getPromptConcatImageHandles(formValues) : []),
+].filter(Boolean);
+
+const getPromptConcatHandleTypes = (formValues = {}) => Object.fromEntries(
+  getPromptConcatImageHandles(formValues).map((handle) => [handle, "green"])
+);
+
+const updatePromptConcatFieldByHandle = (formValues = {}, handle, value) => {
+  const nextFormValues = { ...formValues };
+  if (handle === "concatInput") nextFormValues.prompt = value || "";
+  else if (handle === "concatInput4") nextFormValues.system_prompt = value || "";
+  else if (handle === "concatImageInput") nextFormValues.image_url = value || null;
+  else if (isConcatImageReferenceHandle(handle)) {
+    nextFormValues.image_urls = setConcatImageReferenceAtIndex(
+      nextFormValues.image_urls,
+      getConcatImageReferenceIndex(handle),
+      value
+    );
+  }
+  return nextFormValues;
+};
+
+const getOrderedConcatImageValues = (connections, formValues) => {
+  const indexed = connections
+    .map((conn) => ({
+      index: getConcatImageReferenceIndex(conn.targetHandle),
+      value: `{{ ${conn.source}.outputs[0].value }}`,
+    }))
+    .filter((item) => item.index >= 0);
+
+  if (indexed.length === 0) {
+    return Array.isArray(formValues?.image_urls) ? formValues.image_urls : [];
+  }
+
+  const maxIndex = indexed.reduce((max, item) => Math.max(max, item.index), -1);
+  const values = Array.from({ length: maxIndex + 1 }, () => "");
+  indexed.forEach((item) => {
+    values[item.index] = item.value;
+  });
+  return values.filter((value) => value !== "");
+};
+
+const getPromptConcatPayloadFields = (connectedEdges, formValues = {}) => {
+  const promptConnections = connectedEdges.filter((edge) => edge.targetHandle === "concatInput");
+  const systemConnections = connectedEdges.filter((edge) => edge.targetHandle === "concatInput4");
+  const primaryImageConnections = connectedEdges.filter((edge) => edge.targetHandle === "concatImageInput");
+  const extraImageConnections = connectedEdges.filter((edge) => isConcatImageReferenceHandle(edge.targetHandle));
+
+  return {
+    ...formValues,
+    prompt: promptConnections.length > 0
+      ? promptConnections.map((conn) => `{{ ${conn.source}.outputs[0].value }}`).join("\n\n")
+      : formValues?.prompt,
+    system_prompt: systemConnections.length > 0
+      ? systemConnections.map((conn) => `{{ ${conn.source}.outputs[0].value }}`).join("\n\n")
+      : formValues?.system_prompt,
+    image_url: primaryImageConnections.length > 0
+      ? `{{ ${primaryImageConnections[0].source}.outputs[0].value }}`
+      : formValues?.image_url || null,
+    image_urls: getOrderedConcatImageValues(extraImageConnections, formValues),
+  };
 };
 
 const getNodeOutputValues = (node) => {
@@ -219,7 +305,7 @@ const getEdgeColor = (sourceHandle, targetHandle, sourceNode = null, targetNode 
   if (["audioOutput"].includes(sourceHandle)) return "yellow";
 
   if (["textInput", "textInput4", "imageInput", "videoInput", "audioInput2", "concatInput", "concatInput4", "arraySeparatorInput", "listInput", "apiInput"].includes(targetHandle)) return "blue";
-  if (["textInput2", "textInput3", "imageInput2", "imageInput3", "imageInput4", "videoInput2", "videoInput3", "videoInput6", "audioInput3", "concatImageInput", "apiInput2", "apiInput3"].includes(targetHandle) || isImageReferenceHandle(targetHandle)) return "green";
+  if (["textInput2", "textInput3", "imageInput2", "imageInput3", "imageInput4", "videoInput2", "videoInput3", "videoInput6", "audioInput3", "concatImageInput", "apiInput2", "apiInput3"].includes(targetHandle) || isImageReferenceHandle(targetHandle) || isConcatImageReferenceHandle(targetHandle)) return "green";
   if (["videoInput4", "audioInput4", "videoInput7"].includes(targetHandle)) return "orange";
   if (["audioInput", "videoInput5", "videoInput8"].includes(targetHandle)) return "yellow";
 
@@ -655,8 +741,8 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
           updatedFormValues.system_prompt = sourceValue;
         }
 
-        else if (targetHandle === "concatImageInput") {
-          updatedFormValues.image_url = resultValue;
+        else if (targetHandle === "concatImageInput" || isConcatImageReferenceHandle(targetHandle)) {
+          updatedFormValues = updatePromptConcatFieldByHandle(updatedFormValues, targetHandle, resultValue);
         }
 
         else if (isImageReferenceHandle(targetHandle)) {
@@ -901,8 +987,8 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
             }
 
             if (color === "green") {
-              if (params.targetHandle === "concatImageInput") {
-                updatedFormValues.image_url = resultValue || null;
+              if (params.targetHandle === "concatImageInput" || isConcatImageReferenceHandle(params.targetHandle)) {
+                updatedFormValues = updatePromptConcatFieldByHandle(updatedFormValues, params.targetHandle, resultValue || null);
               } else if (["textInput2", "videoInput2", "imageInput3", "audioInput3"].includes(params.targetHandle)) {
                 updatedFormValues.image_url = resultValue || null;
               } else if (params.targetHandle === "imageInput4") {
@@ -1239,24 +1325,14 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
       let dynamicPrompt = "";
       let dynamicConcatSystemPrompt = formValues?.system_prompt || "";
       let dynamicConcatImageUrl = formValues?.image_url || null;
+      let dynamicConcatImageUrls = Array.isArray(formValues?.image_urls) ? formValues.image_urls.filter(Boolean) : [];
 
       if (node.type === "concatNode") {
-        const concatFieldByHandle = {
-          concatInput: "prompt",
-          concatInput4: "system_prompt",
-        };
-        Object.entries(concatFieldByHandle).forEach(([handle, field]) => {
-          const connections = connectedEdges.filter((e) => e.targetHandle === handle);
-          const value = connections.length > 0
-            ? connections.map((conn) => `{{ ${conn.source}.outputs[0].value }}`).join("\n\n")
-            : (formValues?.[field] || "");
-          if (field === "prompt") dynamicPrompt = value;
-          if (field === "system_prompt") dynamicConcatSystemPrompt = value;
-        });
-        const concatImageConnections = connectedEdges.filter((e) => e.targetHandle === "concatImageInput");
-        dynamicConcatImageUrl = concatImageConnections.length > 0
-          ? `{{ ${concatImageConnections[0].source}.outputs[0].value }}`
-          : formValues?.image_url || null;
+        const concatPayloadFields = getPromptConcatPayloadFields(connectedEdges, formValues);
+        dynamicPrompt = concatPayloadFields.prompt || "";
+        dynamicConcatSystemPrompt = concatPayloadFields.system_prompt || "";
+        dynamicConcatImageUrl = concatPayloadFields.image_url || null;
+        dynamicConcatImageUrls = Array.isArray(concatPayloadFields.image_urls) ? concatPayloadFields.image_urls.filter(Boolean) : [];
       } else {
         const promptConnections = connectedEdges.filter((e) =>
           ["textInput", "imageInput", "videoInput", "audioInput2", "arraySeparatorInput", "apiInput"].includes(e.targetHandle)
@@ -1340,13 +1416,10 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
         ...formValues,
         prompt: dynamicPrompt ? dynamicPrompt : formValues?.prompt,
         text: node.type === "arraySeparatorNode" ? (dynamicPrompt || formValues?.text || "") : formValues?.text,
-        context_2: formValues?.context_2,
-        context_3: formValues?.context_3,
-        context_4: formValues?.context_4,
         system_prompt: node.type === "concatNode" ? dynamicConcatSystemPrompt : dynamicSystemPrompt,
-        images_list: dynamicImagesList,
+        images_list: node.type === "concatNode" ? dynamicConcatImageUrls : dynamicImagesList,
         images: dynamicImagesList,
-        image_urls: dynamicImagesList,
+        image_urls: node.type === "concatNode" ? dynamicConcatImageUrls : dynamicImagesList,
         image_url: node.type === "concatNode" ? dynamicConcatImageUrl : dynamicImageUrl,
         video_url: dynamicVideoUrl,
         audio_url: dynamicAudioUrl,
@@ -1822,6 +1895,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
       handleTypes: {
         ...(node.type === 'apiNode' ? Object.keys(node.data?.formValues || {}).reduce((acc, key) => ({ ...acc, [key]: 'white' }), {}) : {}),
         concatInput: "blue", concatInput4: "blue", concatImageInput: "green", concatOutput: "blue",
+        ...(node.type === 'concatNode' ? getPromptConcatHandleTypes(node.data?.formValues || {}) : {}),
         arraySeparatorInput: "blue", arraySeparatorOutput: "blue",
         listInput: "blue", listOutput: "blue",
         apiInput: "blue", apiInput2: "green", apiInput3: "green",
@@ -1927,11 +2001,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
         break;
 
       case "concatNode":
-        validHandles = [
-          "prompt" in formValues && "concatInput",
-          "system_prompt" in formValues && "concatInput4",
-          "image_url" in formValues && "concatImageInput",
-        ].filter(Boolean);
+        validHandles = getPromptConcatValidHandles(formValues);
         break;
 
       case "arraySeparatorNode":
@@ -2004,7 +2074,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
     const newNodeId = getNextId(nodeType);
 
     const handleTypesMap = {
-      concatInput: "blue", concatInput2: "blue", concatInput3: "blue", concatInput4: "blue", concatImageInput: "green", concatOutput: "blue",
+      concatInput: "blue", concatInput4: "blue", concatImageInput: "green", concatOutput: "blue",
       arraySeparatorInput: "blue", arraySeparatorOutput: "blue",
       listInput: "blue", listOutput: "blue",
       apiInput: "blue", apiInput2: "green", apiInput3: "green", apiOutput: "green",
@@ -2039,7 +2109,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
         videoNode: ["videoInput", "videoInput2", "videoInput3", "videoInput4", "videoInput5", "videoInput6", "videoInput7", "videoInput8"],
         audioNode: ["audioInput", "audioInput2", "audioInput3", "audioInput4"],
         apiNode: ["apiInput", "apiInput2", "apiInput3"],
-        concatNode: ["concatInput", "concatInput4", "concatImageInput"],
+        concatNode: ["concatInput", "concatInput4", "concatImageInput", ...getPromptConcatImageHandles(initialData?.formValues || {})],
         arraySeparatorNode: ["arraySeparatorInput"],
         listNode: ["listInput"],
         vidConcatNode: ["videoInput7"],

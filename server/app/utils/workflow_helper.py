@@ -16,6 +16,12 @@ from typing import Any, Optional
 import httpx
 from fastapi import HTTPException
 
+from app.utils.storage import (
+    guess_content_type,
+    is_object_storage_enabled,
+    upload_object_bytes,
+)
+
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = Path(os.getenv("DATA_DIR", str(BASE_DIR / "data")))
 GENERATED_DIR = DATA_DIR / "generated"
@@ -355,7 +361,7 @@ async def materialize_image_outputs(
     for item in outputs:
         value = item["value"]
         if isinstance(value, bytes):
-            file_url = await save_generated_bytes(value, IMAGES_DIR, ".png")
+            file_url = await save_generated_bytes(value, IMAGES_DIR, ".png", "image/png")
             materialized.append({"type": item["type"], "value": file_url})
         else:
             materialized.append(item)
@@ -543,7 +549,7 @@ async def execute_tts_node(model: str, params: dict[str, Any]) -> list[dict[str,
         "/v1/audio/speech", payload, params={"response_format": audio_format}
     )
     extension = ".wav" if audio_format == "wav" else ".mp3"
-    file_url = await save_generated_bytes(response.content, TTS_DIR, extension)
+    file_url = await save_generated_bytes(response.content, TTS_DIR, extension, f"audio/{audio_format}")
     return [{"type": "audio_url", "value": file_url}]
 
 
@@ -599,11 +605,17 @@ def build_prompt_concatenator_schema(chat_model_ids: Optional[list[str]] = None,
                 "input_data": {
                     "properties": {
                         "prompt": field_schema("Prompt", "string", description="Primary instruction or text input."),
-                        "context_2": field_schema("Context 2", "string", description="Additional text input."),
-                        "context_3": field_schema("Context 3", "string", description="Additional text input."),
-                        "context_4": field_schema("Context 4", "string", description="Additional text input."),
-                        "image_url": field_schema("Image URL", "string", description="Optional image input for vision analysis.", field="image"),
                         "system_prompt": field_schema("System Prompt", "string", description="Optional system instruction for the LLM."),
+                        "image_url": field_schema("Image URL", "string", description="Optional image input for vision analysis.", field="image"),
+                        "image_urls": {
+                            "title": "Image Inputs",
+                            "name": "image_urls",
+                            "type": "array",
+                            "field": "images_list",
+                            "items": {"type": "string"},
+                            "default": [],
+                            "description": "Additional image inputs for vision analysis.",
+                        },
                         "mode": enum_field_schema("Mode", ["rewrite", "concat", "vision_json", "extract_image_prompt", "extract_video_prompt"], "rewrite"),
                         "llm_model": enum_field_schema("LLM Model", chat_model_ids, chat_model_ids[0]),
                         "vision_model": enum_field_schema("Vision Model", vision_model_ids, vision_model_ids[0]),
@@ -718,19 +730,81 @@ async def execute_prompt_concatenator_node(params: dict[str, Any]) -> list[dict[
     temperature = float(params.get("temperature") or 0.2)
     system_prompt = (params.get("system_prompt") or "").strip()
     prompt = (params.get("prompt") or "").strip()
-    context_fields = [prompt]
-    for key in ["context_2", "context_3", "context_4"]:
-        value = (params.get(key) or "").strip()
-        if value:
-            context_fields.append(value)
-    merged_text = "\n\n".join(part for part in context_fields if part)
+    merged_text = prompt
 
     if mode == "concat":
         return [{"type": "text", "value": merged_text}]
 
     image_url = (params.get("image_url") or "").strip()
+    image_urls = [
+        str(value).strip()
+        for value in (params.get("image_urls") or params.get("images_list") or [])
+        if str(value).strip()
+    ]
     if image_url:
         ensure_public_reference_image(image_url)
+    for extra_image_url in image_urls:
+        ensure_public_reference_image(extra_image_url)
+    unique_image_urls = []
+    for candidate in ([image_url] if image_url else []) + image_urls:
+        if candidate and candidate not in unique_image_urls:
+            unique_image_urls.append(candidate)
+    multimodal_images = [
+        {"type": "image_url", "image_url": {"url": image_source}}
+        for image_source in unique_image_urls
+    ]
+
+    if mode == "vision_json":
+        if not unique_image_urls:
+            raise HTTPException(status_code=400, detail="Prompt Concatenator vision_json mode requires image input")
+        messages = []
+        messages.append({
+            "role": "system",
+            "content": system_prompt or "Analyze provided image and instruction. Return valid JSON only with keys image_prompt and video_prompt.",
+        })
+        messages.append({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": merged_text or "Analyze this image and return image_prompt and video_prompt JSON."},
+                *multimodal_images,
+            ],
+        })
+        content = await execute_chat_completion(vision_model, messages, temperature)
+        return [{"type": "text", "value": content}]
+
+    parsed_json = None
+    try:
+        parsed_json = json.loads(merged_text)
+    except Exception:
+        parsed_json = None
+
+    if mode == "extract_image_prompt" and isinstance(parsed_json, dict) and parsed_json.get("image_prompt"):
+        return [{"type": "text", "value": str(parsed_json["image_prompt"]).strip()}]
+    if mode == "extract_video_prompt" and isinstance(parsed_json, dict) and parsed_json.get("video_prompt"):
+        return [{"type": "text", "value": str(parsed_json["video_prompt"]).strip()}]
+
+    if mode in {"rewrite", "extract_image_prompt", "extract_video_prompt"}:
+        default_system_prompt = {
+            "rewrite": "Rewrite provided inputs into one clean final prompt. Return plain text only.",
+            "extract_image_prompt": "Extract or rewrite only final image prompt from provided context. Return plain text only.",
+            "extract_video_prompt": "Extract or rewrite only final video prompt from provided context. Return plain text only.",
+        }[mode]
+        messages = [{"role": "system", "content": system_prompt or default_system_prompt}]
+        user_content = merged_text or prompt or default_system_prompt
+        if multimodal_images:
+            messages.append({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": user_content},
+                    *multimodal_images,
+                ],
+            })
+        else:
+            messages.append({"role": "user", "content": user_content})
+        content = await execute_chat_completion(llm_model, messages, temperature)
+        return [{"type": "text", "value": content}]
+
+    raise HTTPException(status_code=400, detail=f"Unsupported Prompt Concatenator mode: {mode}")
 
     if mode == "vision_json":
         if not image_url:
@@ -1861,9 +1935,30 @@ def upsert_run_entry(run: dict[str, Any], node_id: str, entry: dict[str, Any]) -
     run.setdefault("nodes", {})[node_id] = [entry]
 
 
-async def save_generated_bytes(content: bytes, folder: Path, suffix: str) -> str:
+def storage_prefix_for_folder(folder: Path) -> str:
+    try:
+        return folder.relative_to(GENERATED_DIR).as_posix().strip("/") or "generated"
+    except ValueError:
+        return folder.name or "generated"
+
+
+async def save_generated_bytes(
+    content: bytes,
+    folder: Path,
+    suffix: str,
+    content_type: str | None = None,
+) -> str:
     ensure_dirs()
     filename = f"{uuid.uuid4().hex}{suffix}"
+    if is_object_storage_enabled():
+        prefix = storage_prefix_for_folder(folder)
+        key = f"{prefix}/{filename}"
+        return await upload_object_bytes(
+            content,
+            key,
+            suffix,
+            content_type or guess_content_type(suffix),
+        )
     path = folder / filename
     path.write_bytes(content)
     relative = path.relative_to(GENERATED_DIR)
@@ -2127,9 +2222,18 @@ async def get_workflow_api_outputs_helper(run_id: str):
     )
 
 
-async def handle_uploaded_file(filename: str, content: bytes) -> dict[str, Any]:
+async def handle_uploaded_file(
+    filename: str,
+    content: bytes,
+    content_type: str | None = None,
+) -> dict[str, Any]:
     suffix = Path(filename).suffix or ".bin"
-    file_url = await save_generated_bytes(content, UPLOADS_DIR, suffix)
+    file_url = await save_generated_bytes(
+        content,
+        UPLOADS_DIR,
+        suffix,
+        content_type or guess_content_type(suffix),
+    )
     return {"url": file_url}
 
 

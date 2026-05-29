@@ -1,4 +1,6 @@
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi.responses import RedirectResponse
+from app.utils.storage import get_signed_object_download_url
 from app.utils.workflow_helper import (
     calculate_dynamic_cost_helper,
     get_file_upload_url_helper,
@@ -20,7 +22,15 @@ async def get_file_upload_url(request: Request):
 async def upload_file(file: UploadFile = File(...)):
     try:
         content = await file.read()
-        return await handle_uploaded_file(file.filename or "upload.bin", content)
+        return await handle_uploaded_file(file.filename or "upload.bin", content, file.content_type)
+    except Exception as e:
+        if isinstance(e, HTTPException): raise e
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/object/{object_key:path}")
+async def download_object(object_key: str):
+    try:
+        return RedirectResponse(get_signed_object_download_url(object_key), status_code=307)
     except Exception as e:
         if isinstance(e, HTTPException): raise e
         raise HTTPException(status_code=400, detail=str(e))
