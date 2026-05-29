@@ -10,7 +10,7 @@ load_dotenv(dotenv_path=env_path)
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from .routers import workflow_router, app_router
+from .routers import workflow_router, app_router, settings_router
 
 app = FastAPI(title="Workflow API", version="1.0.0")
 
@@ -21,6 +21,7 @@ app.mount("/generated", StaticFiles(directory=static_dir), name="generated")
 
 app.include_router(workflow_router.router, prefix="/api/workflow", tags=["workflow"])
 app.include_router(app_router.router, prefix="/api/app", tags=["app"])
+app.include_router(settings_router.router, prefix="/api/settings", tags=["settings"])
 
 # Configure CORS
 app.add_middleware(

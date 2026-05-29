@@ -6,6 +6,7 @@ import { FaAngleLeft, FaAngleRight } from "react-icons/fa6";
 import { apiNodeModels } from "./utility";
 import { getRunId, getWorkflowId } from "./WorkflowStore";
 import axios from "axios";
+import { runtimeApi, getErrorMessage } from "./runtimeApi";
 import { toast } from "react-hot-toast";
 import { IoClose, IoTrashOutline } from "react-icons/io5";
 import { RiInputMethodLine } from "react-icons/ri";
@@ -425,7 +426,7 @@ const ApiNode = ({ id, data, selected }) => {
       );
       params["params"] = filteredInputParams;
 
-      const response = await axios.post(`/api/workflow/${workflow_id}/node/${id}/run`,
+      const response = await runtimeApi.post(`/api/workflow/${workflow_id}/node/${id}/run`,
         {
           run_id: runId,
           model: selectedModel.id,
@@ -437,7 +438,7 @@ const ApiNode = ({ id, data, selected }) => {
       pollNodeStatus(response.data.run_id);
     } catch(error) {
       data.onDataChange(id, { isLoading: false });
-      toast.error(error.response?.data?.detail || "Error running node");
+      toast.error(getErrorMessage(error, "Error running node"));
       console.error(error);
     };
   };

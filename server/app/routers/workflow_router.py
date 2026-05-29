@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Request
+from app.utils.runtime_config import runtime_config_from_request
 from app.utils.workflow_helper import (
     create_or_update_workflow, 
     get_node_schemas_helper, 
@@ -51,9 +52,10 @@ async def get_workflow_def(workflow_id: str):
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/{workflow_id}/node-schemas")
-async def get_node_schemas(workflow_id: str):
+async def get_node_schemas(workflow_id: str, request: Request):
     try:
-        return await get_node_schemas_helper(workflow_id)
+        runtime = runtime_config_from_request(request)
+        return await get_node_schemas_helper(workflow_id, runtime)
     except Exception as e:
         if isinstance(e, HTTPException): raise e
         raise HTTPException(status_code=400, detail=str(e))
@@ -87,7 +89,8 @@ async def get_api_node_schemas(workflow_id: str):
 async def run_workflow(workflow_id: str, request: Request):
     try:
         payload = await request.json()
-        return await run_workflow_helper(workflow_id, payload)
+        runtime = runtime_config_from_request(request)
+        return await run_workflow_helper(workflow_id, payload, runtime)
     except Exception as e:
         if isinstance(e, HTTPException): raise e
         raise HTTPException(status_code=400, detail=str(e))
@@ -104,7 +107,8 @@ async def get_run_status(run_id: str):
 async def run_node(workflow_id: str, node_id: str, request: Request):
     try:
         payload = await request.json()
-        return await run_node_helper(workflow_id, node_id, payload)
+        runtime = runtime_config_from_request(request)
+        return await run_node_helper(workflow_id, node_id, payload, runtime)
     except Exception as e:
         if isinstance(e, HTTPException): raise e
         raise HTTPException(status_code=400, detail=str(e))

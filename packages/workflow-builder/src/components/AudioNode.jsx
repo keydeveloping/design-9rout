@@ -10,6 +10,7 @@ import UploadNode from "./UploadNode";
 import { audioModels, downloadFile } from "./utility";
 import AudioPlayer from "./AudioPlayer";
 import axios from "axios";
+import { runtimeApi, getErrorMessage } from "./runtimeApi";
 import { SlOptions } from "react-icons/sl";
 import { MdOutlineFileDownload } from "react-icons/md";
 import { FaAngleLeft, FaAngleRight } from "react-icons/fa6";
@@ -274,7 +275,7 @@ const AudioGeneration = ({ id, data, selected }) => {
         }
       }
 
-      const response = await axios.post(`/api/workflow/${workflow_id}/node/${id}/run`, {
+      const response = await runtimeApi.post(`/api/workflow/${workflow_id}/node/${id}/run`, {
         run_id: runId || undefined,
         model: selectedModel.id,
         params: params,
@@ -285,7 +286,7 @@ const AudioGeneration = ({ id, data, selected }) => {
       pollNodeStatus(response.data.run_id);
     } catch(error) {
       data.onDataChange(id, { isLoading: false });
-      toast.error(error.response?.data?.detail || "Error running node");
+      toast.error(getErrorMessage(error, "Error running node"));
       console.error(error);
     };
   };

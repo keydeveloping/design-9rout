@@ -3,6 +3,7 @@ import base64
 import copy
 import ipaddress
 import json
+import hashlib
 import logging
 import mimetypes
 import os
@@ -16,6 +17,7 @@ from typing import Any, Optional
 import httpx
 from fastapi import HTTPException
 
+from app.utils.runtime_config import RuntimeConfig
 from app.utils.storage import (
     guess_content_type,
     is_object_storage_enabled,
@@ -34,35 +36,10 @@ RUNS_FILE = DATA_DIR / "runs.json"
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-NINEROUTER_URL = os.getenv("NINEROUTER_URL", "http://localhost:20128").rstrip("/")
-NINEROUTER_KEY = os.getenv("NINEROUTER_KEY", "").strip()
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
-
-
-def is_local_9router() -> bool:
-    try:
-        host = (httpx.URL(NINEROUTER_URL).host or "").strip().lower()
-    except Exception:
-        return False
-    if host in {"localhost", "127.0.0.1", "0.0.0.0", "host.docker.internal"}:
-        return True
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    return bool(
-        ip.is_loopback
-        or ip.is_private
-        or ip.is_link_local
-        or ip.is_unspecified
-        or ip.is_reserved
-    )
-
-
-ALLOW_LOCAL_REFERENCE_IMAGES = (
+ALLOW_LOCAL_REFERENCE_IMAGES_ENV = (
     os.getenv("ALLOW_LOCAL_REFERENCE_IMAGES", "").strip().lower()
     in {"1", "true", "yes", "on"}
-    or is_local_9router()
 )
 MODEL_CACHE_TTL_SECONDS = 300
 DEFAULT_PROMPT_LLM_MODEL = os.getenv("PROMPT_LLM_MODEL", "openai/gpt-4o").strip() or "openai/gpt-4o"
@@ -123,7 +100,278 @@ IMAGE_FIELD_OVERRIDES = {
     },
 }
 
-_MODEL_CACHE: dict[str, Any] = {"expires_at": 0.0, "value": None}
+_MODEL_CACHE: dict[str, dict[str, Any]] = {}
+
+
+def runtime_cache_key(runtime: RuntimeConfig) -> str:
+    key_hash = hashlib.sha256(runtime.api_key.encode("utf-8")).hexdigest()[:16]
+    return f"{runtime.base_url}|{key_hash}"
+
+
+def sample_model_ids(discovered: dict[str, Any], limit: int = 5) -> list[str]:
+    ids: list[str] = []
+    for bucket in ["chat", "vision", "image", "tts", "stt"]:
+        for item in discovered.get(bucket, []):
+            model_id = item.get("id")
+            if model_id and model_id not in ids:
+                ids.append(model_id)
+            if len(ids) >= limit:
+                return ids
+    return ids
+
+
+async def test_runtime_connection(runtime: RuntimeConfig) -> dict[str, Any]:
+    discovered = await fetch_discovered_models(runtime, refresh=True)
+    models_count = sum(
+        len(discovered.get(bucket, [])) for bucket in ["chat", "vision", "image", "tts", "stt"]
+    )
+    if models_count == 0:
+        raise HTTPException(
+            status_code=502,
+            detail="9router connection test failed or returned no models.",
+        )
+    return {
+        "ok": True,
+        "models_count": models_count,
+        "sample_models": sample_model_ids(discovered),
+        "base_url": runtime.base_url,
+    }
+
+
+async def fetch_discovered_models(runtime: RuntimeConfig, refresh: bool = False) -> dict[str, Any]:
+    import time
+
+    cache_key = runtime_cache_key(runtime)
+    cached = _MODEL_CACHE.get(cache_key)
+    if not refresh and cached and cached["expires_at"] > time.time():
+        return cached["value"]
+
+    image_models, tts_models, stt_models, chat_models, vision_models = await gather_model_lists(runtime)
+    value = {
+        "image": image_models.get("data", []),
+        "tts": tts_models.get("data", []),
+        "stt": stt_models.get("data", []),
+        "chat": chat_models.get("data", []),
+        "vision": vision_models.get("data", []),
+    }
+    _MODEL_CACHE[cache_key] = {
+        "value": value,
+        "expires_at": time.time() + MODEL_CACHE_TTL_SECONDS,
+    }
+    return value
+
+
+async def safe_model_list(runtime: RuntimeConfig, path: str) -> dict[str, Any]:
+    try:
+        return await nine_router_get_json(runtime, path)
+    except HTTPException as exc:
+        logger.warning("Failed to fetch 9router model list %s: %s", path, exc.detail)
+        return {"data": []}
+
+
+async def gather_model_lists(runtime: RuntimeConfig):
+    image_models = await safe_model_list(runtime, "/v1/models/image")
+    tts_models = await safe_model_list(runtime, "/v1/models/tts")
+    stt_models = await safe_model_list(runtime, "/v1/models/stt")
+    chat_models = await safe_model_list(runtime, "/v1/models")
+    vision_models = await safe_model_list(runtime, "/v1/models/image-to-text")
+    return image_models, tts_models, stt_models, chat_models, vision_models
+
+
+async def get_model_info(runtime: RuntimeConfig, model_id: str) -> dict[str, Any]:
+    try:
+        return await nine_router_get_json(runtime, "/v1/models/info", params={"id": model_id})
+    except HTTPException:
+        return {}
+
+
+async def build_node_schemas(runtime: RuntimeConfig) -> dict[str, Any]:
+    discovered = await fetch_discovered_models(runtime)
+    chat_model_ids = [item.get("id") for item in discovered.get("chat", []) if item.get("id")] or [DEFAULT_PROMPT_LLM_MODEL]
+    vision_model_ids = [item.get("id") for item in discovered.get("vision", []) if item.get("id")] or chat_model_ids
+
+    image_models: dict[str, Any] = {
+        "image-passthrough": passthrough_schema(
+            "image_url", "image", "Image URL", "URL of input image."
+        )
+    }
+    for item in discovered["image"]:
+        model_id = item["id"]
+        info = await get_model_info(runtime, model_id)
+        properties, required = build_image_model_properties(model_id, info)
+        image_models[model_id] = {
+            **item,
+            "input_schema": {
+                "schemas": {
+                    "input_data": {
+                        "properties": properties,
+                        "required": required,
+                    }
+                }
+            },
+        }
+
+    audio_models: dict[str, Any] = {
+        "audio-passthrough": passthrough_schema(
+            "audio_url", "audio", "Audio URL", "URL of input audio."
+        )
+    }
+    for item in discovered["tts"]:
+        model_id = item["id"]
+        info = await get_model_info(runtime, model_id)
+        properties = {
+            "input": field_schema(
+                "Text", "string", description="Text to speak.", name="input"
+            ),
+            "format": enum_field_schema("Format", ["mp3", "wav"], "mp3"),
+        }
+        voice_options = extract_voice_options(info)
+        if voice_options:
+            properties["voice"] = enum_field_schema(
+                "Voice", voice_options, voice_options[0]
+            )
+        audio_models[model_id] = {
+            **item,
+            "input_schema": {
+                "schemas": {
+                    "input_data": {
+                        "properties": properties,
+                        "required": ["input"],
+                    }
+                }
+            },
+        }
+
+    text_models: dict[str, Any] = {
+        "text-passthrough": {
+            "id": "text-passthrough",
+            "name": "Input Text",
+            "input_schema": {
+                "schemas": {
+                    "input_data": {
+                        "properties": {
+                            "prompt": field_schema(
+                                "Prompt",
+                                "string",
+                                "Input text.",
+                                name="prompt",
+                            ),
+                        },
+                        "required": ["prompt"],
+                    }
+                }
+            },
+        }
+    }
+    for item in discovered["stt"]:
+        model_id = item["id"]
+        text_models[model_id] = {
+            **item,
+            "input_schema": {
+                "schemas": {
+                    "input_data": {
+                        "properties": {
+                            "audio_url": field_schema(
+                                "Audio URL",
+                                "string",
+                                field="audio",
+                                description="Audio URL to transcribe.",
+                                name="audio_url",
+                            ),
+                            "language": field_schema(
+                                "Language",
+                                "string",
+                                description="Optional language code, e.g. en or id.",
+                            ),
+                            "prompt": field_schema(
+                                "Prompt",
+                                "string",
+                                description="Optional hint text for transcription.",
+                            ),
+                            "response_format": enum_field_schema(
+                                "Response Format",
+                                ["json", "text", "verbose_json", "srt", "vtt"],
+                                "json",
+                            ),
+                            "temperature": number_field_schema("Temperature", 0),
+                        },
+                        "required": ["audio_url"],
+                    }
+                }
+            },
+        }
+
+    utility_models = {
+        "prompt-concatenator": build_prompt_concatenator_schema(chat_model_ids, vision_model_ids),
+        "array-separator": build_array_separator_schema(),
+        "list": build_list_schema(),
+    }
+
+    return {
+        "categories": {
+            "image": {"models": image_models},
+            "audio": {"models": audio_models},
+            "text": {"models": text_models},
+            "utility": {"models": utility_models},
+        }
+    }
+
+
+async def get_node_schemas_helper(workflow_id: str, runtime: RuntimeConfig):
+    return await build_node_schemas(runtime)
+
+
+async def run_workflow_in_background(
+    workflow_id: str, run_id: str, runtime: RuntimeConfig
+):
+    store = load_workflows_store()
+    workflow = copy.deepcopy(store["workflows"].get(workflow_id))
+    if not workflow:
+        return
+    order = build_topological_order(workflow)
+    for node_id in order:
+        await run_single_node(workflow, node_id, run_id, runtime)
+
+
+async def run_workflow_helper(
+    workflow_id: str, payload: dict, runtime: RuntimeConfig
+):
+    workflow_id = normalize_workflow_id(workflow_id)
+    if not load_workflows_store()["workflows"].get(workflow_id):
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    run_id = uuid.uuid4().hex
+    run_store = load_runs_store()
+    run_store["runs"][run_id] = {
+        "run_id": run_id,
+        "workflow_id": workflow_id,
+        "nodes": {},
+    }
+    save_runs_store(run_store)
+    asyncio.create_task(run_workflow_in_background(workflow_id, run_id, runtime))
+    return {"run_id": run_id}
+
+
+async def run_node_in_background(
+    workflow_id: str, node_id: str, run_id: str, runtime: RuntimeConfig
+):
+    workflow = copy.deepcopy(get_workflow_or_404(workflow_id))
+    await run_single_node(workflow, node_id, run_id, runtime)
+
+
+async def run_node_helper(
+    workflow_id: str, node_id: str, payload: dict, runtime: RuntimeConfig
+):
+    workflow_id = normalize_workflow_id(workflow_id)
+    run_id = payload.get("run_id") or uuid.uuid4().hex
+    run_store = load_runs_store()
+    run_store["runs"][run_id] = {
+        "run_id": run_id,
+        "workflow_id": workflow_id,
+        "nodes": {},
+    }
+    save_runs_store(run_store)
+    asyncio.create_task(run_node_in_background(workflow_id, node_id, run_id, runtime))
+    return {"run_id": run_id}
 
 
 def now_iso() -> str:
@@ -212,25 +460,48 @@ def normalize_workflow(
     return workflow
 
 
-async def nine_router_headers(json_content: bool = True) -> dict[str, str]:
-    headers: dict[str, str] = {}
-    if NINEROUTER_KEY:
-        headers["Authorization"] = f"Bearer {NINEROUTER_KEY}"
+def is_local_9router_url(base_url: str) -> bool:
+    try:
+        host = (httpx.URL(base_url).host or "").strip().lower()
+    except Exception:
+        return False
+    if host in {"localhost", "127.0.0.1", "0.0.0.0", "host.docker.internal"}:
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return bool(
+        ip.is_loopback
+        or ip.is_private
+        or ip.is_link_local
+        or ip.is_unspecified
+        or ip.is_reserved
+    )
+
+
+def nine_router_headers(runtime: RuntimeConfig, json_content: bool = True) -> dict[str, str]:
+    headers: dict[str, str] = {"Authorization": f"Bearer {runtime.api_key}"}
     if json_content:
         headers["Content-Type"] = "application/json"
     return headers
 
 
+def nine_router_url(runtime: RuntimeConfig, path: str) -> str:
+    suffix = path if path.startswith("/") else f"/{path}"
+    return f"{runtime.base_url}{suffix}"
+
+
 async def nine_router_get_json(
-    path: str, params: Optional[dict[str, Any]] = None
+    runtime: RuntimeConfig, path: str, params: Optional[dict[str, Any]] = None
 ) -> dict[str, Any]:
-    url = f"{NINEROUTER_URL}{path}"
+    url = nine_router_url(runtime, path)
     async with httpx.AsyncClient(timeout=60.0) as client:
         try:
             response = await client.get(
                 url,
                 params=params,
-                headers=await nine_router_headers(json_content=False),
+                headers=nine_router_headers(runtime, json_content=False),
             )
         except httpx.RequestError as exc:
             raise HTTPException(
@@ -239,11 +510,8 @@ async def nine_router_get_json(
     if response.status_code >= 400:
         detail = response.text
         try:
-            detail = (
-                response.json().get("error", {}).get("message")
-                or response.json().get("detail")
-                or detail
-            )
+            body = response.json()
+            detail = body.get("error", {}).get("message") or body.get("detail") or detail
         except Exception:
             pass
         raise HTTPException(status_code=response.status_code, detail=detail)
@@ -251,13 +519,14 @@ async def nine_router_get_json(
 
 
 async def nine_router_post_json(
+    runtime: RuntimeConfig,
     path: str,
     payload: dict[str, Any],
     params: Optional[dict[str, Any]] = None,
     accept: Optional[str] = None,
 ) -> httpx.Response:
-    url = f"{NINEROUTER_URL}{path}"
-    headers = await nine_router_headers()
+    url = nine_router_url(runtime, path)
+    headers = nine_router_headers(runtime)
     if accept:
         headers["Accept"] = accept
     async with httpx.AsyncClient(timeout=180.0) as client:
@@ -283,10 +552,13 @@ async def nine_router_post_json(
 
 
 async def nine_router_post_sse(
-    path: str, payload: dict[str, Any], params: Optional[dict[str, Any]] = None
+    runtime: RuntimeConfig,
+    path: str,
+    payload: dict[str, Any],
+    params: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    url = f"{NINEROUTER_URL}{path}"
-    headers = await nine_router_headers()
+    url = nine_router_url(runtime, path)
+    headers = nine_router_headers(runtime)
     headers["Accept"] = "text/event-stream"
     done_payload = None
     current_event = None
@@ -387,12 +659,14 @@ async def parse_image_sse(body: dict[str, Any]) -> list[dict[str, Any]]:
     return await materialize_image_outputs(outputs)
 
 
-async def fetch_image_outputs(payload: dict[str, Any]) -> list[dict[str, Any]]:
+async def fetch_image_outputs(
+    runtime: RuntimeConfig, payload: dict[str, Any]
+) -> list[dict[str, Any]]:
     model = payload["model"]
     if should_use_sse_image(model):
-        body = await nine_router_post_sse("/v1/images/generations", payload)
+        body = await nine_router_post_sse(runtime, "/v1/images/generations", payload)
         return await parse_image_sse(body)
-    response = await nine_router_post_json("/v1/images/generations", payload)
+    response = await nine_router_post_json(runtime, "/v1/images/generations", payload)
     return await parse_image_response(response)
 
 
@@ -419,7 +693,9 @@ def prune_empty_params(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def ensure_public_reference_image(image_url: Optional[str]) -> None:
+def ensure_public_reference_image(
+    image_url: Optional[str], runtime: RuntimeConfig
+) -> None:
     if not image_url:
         return
     try:
@@ -455,8 +731,11 @@ def ensure_public_reference_image(image_url: Optional[str]) -> None:
         )
     )
 
+    allow_local_reference_images = (
+        ALLOW_LOCAL_REFERENCE_IMAGES_ENV or is_local_9router_url(runtime.base_url)
+    )
     if is_local_host or is_private_ip:
-        if ALLOW_LOCAL_REFERENCE_IMAGES:
+        if allow_local_reference_images:
             logger.warning(
                 "Allowing local reference image URL for local 9router development: %s",
                 image_url,
@@ -464,11 +743,13 @@ def ensure_public_reference_image(image_url: Optional[str]) -> None:
             return
         raise HTTPException(
             status_code=400,
-            detail="Reference image URL must be publicly reachable by 9router/provider. Set PUBLIC_BASE_URL to a public tunnel/domain and re-upload image, or set ALLOW_LOCAL_REFERENCE_IMAGES=true for local 9router development.",
+            detail="Reference image URL must be publicly reachable by 9router/provider. Set PUBLIC_BASE_URL to a public tunnel/domain and re-upload image, or use local 9router development mode.",
         )
 
 
-async def build_image_payload(model: str, params: dict[str, Any]) -> dict[str, Any]:
+async def build_image_payload(
+    runtime: RuntimeConfig, model: str, params: dict[str, Any]
+) -> dict[str, Any]:
     prompt = normalize_image_prompt(params.get("prompt"))
     if not prompt:
         raise HTTPException(status_code=400, detail="Image generation requires prompt")
@@ -486,9 +767,9 @@ async def build_image_payload(model: str, params: dict[str, Any]) -> dict[str, A
     first_image = params.get("image") or (image_list[0] if image_list else None)
 
     if first_image:
-        ensure_public_reference_image(first_image)
+        ensure_public_reference_image(first_image, runtime)
     for image_url in image_list:
-        ensure_public_reference_image(image_url)
+        ensure_public_reference_image(image_url, runtime)
 
     if should_use_sse_image(model):
         return prune_empty_params(
@@ -527,26 +808,28 @@ async def build_image_payload(model: str, params: dict[str, Any]) -> dict[str, A
 
 
 async def execute_image_node(
-    model: str, params: dict[str, Any]
+    runtime: RuntimeConfig, model: str, params: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    payload = await build_image_payload(model, params)
+    payload = await build_image_payload(runtime, model, params)
     logger.info(
         "9router image request model=%s prompt_chars=%s keys=%s",
         model,
         len(payload.get("prompt", "")),
         sorted(payload.keys()),
     )
-    return await fetch_image_outputs(payload)
+    return await fetch_image_outputs(runtime, payload)
 
 
-async def execute_tts_node(model: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+async def execute_tts_node(
+    runtime: RuntimeConfig, model: str, params: dict[str, Any]
+) -> list[dict[str, Any]]:
     audio_format = params.get("format") or "mp3"
     payload = {
         "model": build_tts_model(model, params.get("voice")),
         "input": params.get("input", ""),
     }
     response = await nine_router_post_json(
-        "/v1/audio/speech", payload, params={"response_format": audio_format}
+        runtime, "/v1/audio/speech", payload, params={"response_format": audio_format}
     )
     extension = ".wav" if audio_format == "wav" else ".mp3"
     file_url = await save_generated_bytes(response.content, TTS_DIR, extension, f"audio/{audio_format}")
@@ -564,7 +847,9 @@ def build_tts_model(model: str, voice: Optional[str]) -> str:
     return voice if model.endswith("tts") else model
 
 
-async def execute_stt_node(model: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+async def execute_stt_node(
+    runtime: RuntimeConfig, model: str, params: dict[str, Any]
+) -> list[dict[str, Any]]:
     audio_url = params.get("audio_url")
     if not audio_url:
         raise HTTPException(status_code=400, detail="STT requires audio_url")
@@ -579,7 +864,7 @@ async def execute_stt_node(model: str, params: dict[str, Any]) -> list[dict[str,
         "file": (f"audio{extension}", file_bytes, content_type),
     }
     response = await nine_router_post_multipart(
-        "/v1/audio/transcriptions", data=data, files=files
+        runtime, "/v1/audio/transcriptions", data=data, files=files
     )
     fmt = params.get("response_format") or "json"
     if fmt == "json":
@@ -695,8 +980,14 @@ def build_list_schema() -> dict[str, Any]:
     }
 
 
-async def execute_chat_completion(model: str, messages: list[dict[str, Any]], temperature: float = 0.2) -> str:
+async def execute_chat_completion(
+    runtime: RuntimeConfig,
+    model: str,
+    messages: list[dict[str, Any]],
+    temperature: float = 0.2,
+) -> str:
     response = await nine_router_post_json(
+        runtime,
         "/v1/chat/completions",
         {
             "model": model,
@@ -723,7 +1014,9 @@ async def execute_chat_completion(model: str, messages: list[dict[str, Any]], te
     raise HTTPException(status_code=502, detail="Chat completion response missing text content")
 
 
-async def execute_prompt_concatenator_node(params: dict[str, Any]) -> list[dict[str, Any]]:
+async def execute_prompt_concatenator_node(
+    runtime: RuntimeConfig, params: dict[str, Any]
+) -> list[dict[str, Any]]:
     mode = (params.get("mode") or "concat").strip()
     llm_model = (params.get("llm_model") or DEFAULT_PROMPT_LLM_MODEL).strip() or DEFAULT_PROMPT_LLM_MODEL
     vision_model = (params.get("vision_model") or llm_model).strip() or llm_model
@@ -742,9 +1035,9 @@ async def execute_prompt_concatenator_node(params: dict[str, Any]) -> list[dict[
         if str(value).strip()
     ]
     if image_url:
-        ensure_public_reference_image(image_url)
+        ensure_public_reference_image(image_url, runtime)
     for extra_image_url in image_urls:
-        ensure_public_reference_image(extra_image_url)
+        ensure_public_reference_image(extra_image_url, runtime)
     unique_image_urls = []
     for candidate in ([image_url] if image_url else []) + image_urls:
         if candidate and candidate not in unique_image_urls:
@@ -769,7 +1062,7 @@ async def execute_prompt_concatenator_node(params: dict[str, Any]) -> list[dict[
                 *multimodal_images,
             ],
         })
-        content = await execute_chat_completion(vision_model, messages, temperature)
+        content = await execute_chat_completion(runtime, vision_model, messages, temperature)
         return [{"type": "text", "value": content}]
 
     parsed_json = None
@@ -801,70 +1094,18 @@ async def execute_prompt_concatenator_node(params: dict[str, Any]) -> list[dict[
             })
         else:
             messages.append({"role": "user", "content": user_content})
-        content = await execute_chat_completion(llm_model, messages, temperature)
-        return [{"type": "text", "value": content}]
-
-    raise HTTPException(status_code=400, detail=f"Unsupported Prompt Concatenator mode: {mode}")
-
-    if mode == "vision_json":
-        if not image_url:
-            raise HTTPException(status_code=400, detail="Prompt Concatenator vision_json mode requires image_url")
-        messages = []
-        messages.append({
-            "role": "system",
-            "content": system_prompt or "Analyze provided image and instruction. Return valid JSON only with keys image_prompt and video_prompt.",
-        })
-        messages.append({
-            "role": "user",
-            "content": [
-                {"type": "text", "text": merged_text or "Analyze this image and return image_prompt and video_prompt JSON."},
-                {"type": "image_url", "image_url": {"url": image_url}},
-            ],
-        })
-        content = await execute_chat_completion(vision_model, messages, temperature)
-        return [{"type": "text", "value": content}]
-
-    parsed_json = None
-    try:
-        parsed_json = json.loads(merged_text)
-    except Exception:
-        parsed_json = None
-
-    if mode == "extract_image_prompt" and isinstance(parsed_json, dict) and parsed_json.get("image_prompt"):
-        return [{"type": "text", "value": str(parsed_json["image_prompt"]).strip()}]
-    if mode == "extract_video_prompt" and isinstance(parsed_json, dict) and parsed_json.get("video_prompt"):
-        return [{"type": "text", "value": str(parsed_json["video_prompt"]).strip()}]
-
-    if mode in {"rewrite", "extract_image_prompt", "extract_video_prompt"}:
-        default_system_prompt = {
-            "rewrite": "Rewrite provided inputs into one clean final prompt. Return plain text only.",
-            "extract_image_prompt": "Extract or rewrite only final image prompt from provided context. Return plain text only.",
-            "extract_video_prompt": "Extract or rewrite only final video prompt from provided context. Return plain text only.",
-        }[mode]
-        messages = [{"role": "system", "content": system_prompt or default_system_prompt}]
-        user_content = merged_text or prompt or default_system_prompt
-        if image_url:
-            messages.append({
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": user_content},
-                    {"type": "image_url", "image_url": {"url": image_url}},
-                ],
-            })
-        else:
-            messages.append({"role": "user", "content": user_content})
-        content = await execute_chat_completion(llm_model, messages, temperature)
+        content = await execute_chat_completion(runtime, llm_model, messages, temperature)
         return [{"type": "text", "value": content}]
 
     raise HTTPException(status_code=400, detail=f"Unsupported Prompt Concatenator mode: {mode}")
 
 
 async def execute_utility_node(
-    node: dict[str, Any], params: dict[str, Any]
+    runtime: RuntimeConfig, node: dict[str, Any], params: dict[str, Any]
 ) -> list[dict[str, Any]]:
     model = node.get("model")
     if model == "prompt-concatenator":
-        return await execute_prompt_concatenator_node(params)
+        return await execute_prompt_concatenator_node(runtime, params)
     if model == "array-separator":
         text = params.get("text")
         if text is None:
@@ -904,7 +1145,7 @@ async def execute_utility_node(
 
 
 async def execute_node(
-    node: dict[str, Any], params: dict[str, Any]
+    runtime: RuntimeConfig, node: dict[str, Any], params: dict[str, Any]
 ) -> list[dict[str, Any]]:
     category = node.get("category")
     model = node.get("model")
@@ -917,13 +1158,13 @@ async def execute_node(
         return [{"type": "audio_url", "value": params.get("audio_url", "")}]
 
     if category == "image":
-        return await execute_image_node(model, params)
+        return await execute_image_node(runtime, model, params)
     if category == "audio":
-        return await execute_tts_node(model, params)
+        return await execute_tts_node(runtime, model, params)
     if category == "text":
-        return await execute_stt_node(model, params)
+        return await execute_stt_node(runtime, model, params)
     if category == "utility":
-        return await execute_utility_node(node, params)
+        return await execute_utility_node(runtime, node, params)
 
     raise HTTPException(
         status_code=400, detail=f"Unsupported node category: {category}"
@@ -980,6 +1221,7 @@ async def run_single_node(
     workflow: dict[str, Any],
     node_id: str,
     run_id: str,
+    runtime: RuntimeConfig,
     visited: Optional[set[str]] = None,
 ) -> dict[str, Any]:
     run_store = load_runs_store()
@@ -1005,7 +1247,7 @@ async def run_single_node(
             "succeeded",
             "completed",
         ]:
-            await run_single_node(workflow, upstream_id, run_id, visited)
+            await run_single_node(workflow, upstream_id, run_id, runtime, visited)
             run = load_runs_store()["runs"].get(run_id) or run
 
     node = find_node(workflow, node_id)
@@ -1020,7 +1262,7 @@ async def run_single_node(
     )
     params = apply_edge_fallbacks(workflow, node, params, node_outputs)
     try:
-        outputs = await execute_node(node, params)
+        outputs = await execute_node(runtime, node, params)
         await persist_run_result(workflow, run, node_id, outputs)
     except HTTPException as exc:
         await persist_run_failure(
@@ -1044,10 +1286,10 @@ async def run_single_node(
 
 
 async def nine_router_post_multipart(
-    path: str, data: dict[str, Any], files: dict[str, Any]
+    runtime: RuntimeConfig, path: str, data: dict[str, Any], files: dict[str, Any]
 ) -> httpx.Response:
-    url = f"{NINEROUTER_URL}{path}"
-    headers = await nine_router_headers(json_content=False)
+    url = nine_router_url(runtime, path)
+    headers = nine_router_headers(runtime, json_content=False)
     async with httpx.AsyncClient(timeout=180.0) as client:
         try:
             response = await client.post(url, data=data, files=files, headers=headers)
@@ -1066,49 +1308,6 @@ async def nine_router_post_multipart(
             pass
         raise HTTPException(status_code=response.status_code, detail=detail)
     return response
-
-
-async def fetch_discovered_models() -> dict[str, Any]:
-    import time
-
-    if _MODEL_CACHE["value"] and _MODEL_CACHE["expires_at"] > time.time():
-        return _MODEL_CACHE["value"]
-
-    image_models, tts_models, stt_models, chat_models, vision_models = await gather_model_lists()
-    value = {
-        "image": image_models.get("data", []),
-        "tts": tts_models.get("data", []),
-        "stt": stt_models.get("data", []),
-        "chat": chat_models.get("data", []),
-        "vision": vision_models.get("data", []),
-    }
-    _MODEL_CACHE["value"] = value
-    _MODEL_CACHE["expires_at"] = time.time() + MODEL_CACHE_TTL_SECONDS
-    return value
-
-
-async def safe_model_list(path: str) -> dict[str, Any]:
-    try:
-        return await nine_router_get_json(path)
-    except HTTPException as exc:
-        logger.warning("Failed to fetch 9router model list %s: %s", path, exc.detail)
-        return {"data": []}
-
-
-async def gather_model_lists():
-    image_models = await safe_model_list("/v1/models/image")
-    tts_models = await safe_model_list("/v1/models/tts")
-    stt_models = await safe_model_list("/v1/models/stt")
-    chat_models = await safe_model_list("/v1/models")
-    vision_models = await safe_model_list("/v1/models/image-to-text")
-    return image_models, tts_models, stt_models, chat_models, vision_models
-
-
-async def get_model_info(model_id: str) -> dict[str, Any]:
-    try:
-        return await nine_router_get_json("/v1/models/info", params={"id": model_id})
-    except HTTPException:
-        return {}
 
 
 def build_image_model_properties(
@@ -1203,472 +1402,6 @@ def build_image_model_properties(
 
 def format_name_for_label(value: str) -> str:
     return " ".join(part.capitalize() for part in value.split("_"))
-
-
-async def build_node_schemas() -> dict[str, Any]:
-    discovered = await fetch_discovered_models()
-    chat_model_ids = [item.get("id") for item in discovered.get("chat", []) if item.get("id")] or [DEFAULT_PROMPT_LLM_MODEL]
-    vision_model_ids = [item.get("id") for item in discovered.get("vision", []) if item.get("id")] or chat_model_ids
-
-    image_models: dict[str, Any] = {
-        "image-passthrough": passthrough_schema(
-            "image_url", "image", "Image URL", "URL of input image."
-        )
-    }
-    for item in discovered["image"]:
-        model_id = item["id"]
-        info = await get_model_info(model_id)
-        properties, required = build_image_model_properties(model_id, info)
-        image_models[model_id] = {
-            **item,
-            "input_schema": {
-                "schemas": {
-                    "input_data": {
-                        "properties": properties,
-                        "required": required,
-                    }
-                }
-            },
-        }
-
-    audio_models: dict[str, Any] = {
-        "audio-passthrough": passthrough_schema(
-            "audio_url", "audio", "Audio URL", "URL of input audio."
-        )
-    }
-    for item in discovered["tts"]:
-        model_id = item["id"]
-        info = await get_model_info(model_id)
-        properties = {
-            "input": field_schema(
-                "Text", "string", description="Text to speak.", name="input"
-            ),
-            "format": enum_field_schema("Format", ["mp3", "wav"], "mp3"),
-        }
-        voice_options = extract_voice_options(info)
-        if voice_options:
-            properties["voice"] = enum_field_schema(
-                "Voice", voice_options, voice_options[0]
-            )
-        audio_models[model_id] = {
-            **item,
-            "input_schema": {
-                "schemas": {
-                    "input_data": {
-                        "properties": properties,
-                        "required": ["input"],
-                    }
-                }
-            },
-        }
-
-    text_models: dict[str, Any] = {
-        "text-passthrough": {
-            "id": "text-passthrough",
-            "name": "Input Text",
-            "input_schema": {
-                "schemas": {
-                    "input_data": {
-                        "properties": {
-                            "prompt": field_schema(
-                                "Prompt",
-                                "string",
-                                description="Input text.",
-                                name="prompt",
-                            ),
-                        },
-                        "required": ["prompt"],
-                    }
-                }
-            },
-        }
-    }
-    for item in discovered["stt"]:
-        model_id = item["id"]
-        text_models[model_id] = {
-            **item,
-            "input_schema": {
-                "schemas": {
-                    "input_data": {
-                        "properties": {
-                            "audio_url": field_schema(
-                                "Audio URL",
-                                "string",
-                                field="audio",
-                                description="Audio URL to transcribe.",
-                                name="audio_url",
-                            ),
-                            "language": field_schema(
-                                "Language",
-                                "string",
-                                description="Optional language code, e.g. en or id.",
-                            ),
-                            "prompt": field_schema(
-                                "Prompt",
-                                "string",
-                                description="Optional hint text for transcription.",
-                            ),
-                            "response_format": enum_field_schema(
-                                "Response Format",
-                                ["json", "text", "verbose_json", "srt", "vtt"],
-                                "json",
-                            ),
-                            "temperature": number_field_schema("Temperature", 0),
-                        },
-                        "required": ["audio_url"],
-                    }
-                }
-            },
-        }
-
-    utility_models = {
-        "prompt-concatenator": build_prompt_concatenator_schema(chat_model_ids, vision_model_ids),
-        "array-separator": build_array_separator_schema(),
-        "list": build_list_schema(),
-    }
-
-    return {
-        "categories": {
-            "image": {"models": image_models},
-            "audio": {"models": audio_models},
-            "text": {"models": text_models},
-            "utility": {"models": utility_models},
-        }
-    }
-
-
-async def build_node_schemas_old_remove_marker() -> dict[str, Any]:
-    discovered = await fetch_discovered_models()
-
-    image_models: dict[str, Any] = {
-        "image-passthrough": passthrough_schema(
-            "image_url", "image", "Image URL", "URL of input image."
-        )
-    }
-    for item in discovered["image"]:
-        model_id = item["id"]
-        info = await get_model_info(model_id)
-        properties, required = build_image_model_properties(model_id, info)
-        image_models[model_id] = {
-            **item,
-            "input_schema": {
-                "schemas": {
-                    "input_data": {
-                        "properties": properties,
-                        "required": required,
-                    }
-                }
-            },
-        }
-
-    audio_models: dict[str, Any] = {
-        "audio-passthrough": passthrough_schema(
-            "audio_url", "audio", "Audio URL", "URL of input audio."
-        )
-    }
-    for item in discovered["tts"]:
-        model_id = item["id"]
-        info = await get_model_info(model_id)
-        properties = {
-            "input": field_schema(
-                "Text", "string", description="Text to speak.", name="input"
-            ),
-            "format": enum_field_schema("Format", ["mp3", "wav"], "mp3"),
-        }
-        voice_options = extract_voice_options(info)
-        if voice_options:
-            properties["voice"] = enum_field_schema(
-                "Voice", voice_options, voice_options[0]
-            )
-        audio_models[model_id] = {
-            **item,
-            "input_schema": {
-                "schemas": {
-                    "input_data": {
-                        "properties": properties,
-                        "required": ["input"],
-                    }
-                }
-            },
-        }
-
-    text_models: dict[str, Any] = {
-        "text-passthrough": {
-            "id": "text-passthrough",
-            "name": "Input Text",
-            "input_schema": {
-                "schemas": {
-                    "input_data": {
-                        "properties": {
-                            "prompt": field_schema(
-                                "Prompt",
-                                "string",
-                                description="Input text.",
-                                name="prompt",
-                            ),
-                        },
-                        "required": ["prompt"],
-                    }
-                }
-            },
-        }
-    }
-    for item in discovered["stt"]:
-        model_id = item["id"]
-        text_models[model_id] = {
-            **item,
-            "input_schema": {
-                "schemas": {
-                    "input_data": {
-                        "properties": {
-                            "audio_url": field_schema(
-                                "Audio URL",
-                                "string",
-                                field="audio",
-                                description="Audio URL to transcribe.",
-                                name="audio_url",
-                            ),
-                            "language": field_schema(
-                                "Language",
-                                "string",
-                                description="Optional language code, e.g. en or id.",
-                            ),
-                            "prompt": field_schema(
-                                "Prompt",
-                                "string",
-                                description="Optional hint text for transcription.",
-                            ),
-                            "response_format": enum_field_schema(
-                                "Response Format",
-                                ["json", "text", "verbose_json", "srt", "vtt"],
-                                "json",
-                            ),
-                            "temperature": number_field_schema("Temperature", 0),
-                        },
-                        "required": ["audio_url"],
-                    }
-                }
-            },
-        }
-
-    utility_models = {
-        "prompt-concatenator": build_prompt_concatenator_schema()
-    }
-
-    return {
-        "categories": {
-            "image": {"models": image_models},
-            "audio": {"models": audio_models},
-            "text": {"models": text_models},
-            "utility": {"models": utility_models},
-        }
-    }
-
-    audio_models: dict[str, Any] = {
-        "audio-passthrough": passthrough_schema(
-            "audio_url", "audio", "Audio URL", "URL of input audio."
-        )
-    }
-    for item in discovered["tts"]:
-        model_id = item["id"]
-        info = await get_model_info(model_id)
-        properties = {
-            "input": field_schema(
-                "Text", "string", description="Text to speak.", name="input"
-            ),
-            "format": enum_field_schema("Format", ["mp3", "wav"], "mp3"),
-        }
-        voice_options = extract_voice_options(info)
-        if voice_options:
-            properties["voice"] = enum_field_schema(
-                "Voice", voice_options, voice_options[0]
-            )
-        audio_models[model_id] = {
-            **item,
-            "input_schema": {
-                "schemas": {
-                    "input_data": {
-                        "properties": properties,
-                        "required": ["input"],
-                    }
-                }
-            },
-        }
-
-    text_models: dict[str, Any] = {
-        "text-passthrough": {
-            "id": "text-passthrough",
-            "name": "Input Text",
-            "input_schema": {
-                "schemas": {
-                    "input_data": {
-                        "properties": {
-                            "prompt": field_schema(
-                                "Prompt",
-                                "string",
-                                description="Input text.",
-                                name="prompt",
-                            ),
-                        },
-                        "required": ["prompt"],
-                    }
-                }
-            },
-        }
-    }
-    for item in discovered["stt"]:
-        model_id = item["id"]
-        text_models[model_id] = {
-            **item,
-            "input_schema": {
-                "schemas": {
-                    "input_data": {
-                        "properties": {
-                            "audio_url": field_schema(
-                                "Audio URL",
-                                "string",
-                                field="audio",
-                                description="Audio URL to transcribe.",
-                                name="audio_url",
-                            ),
-                            "language": field_schema(
-                                "Language",
-                                "string",
-                                description="Optional language code, e.g. en or id.",
-                            ),
-                            "prompt": field_schema(
-                                "Prompt",
-                                "string",
-                                description="Optional hint text for transcription.",
-                            ),
-                            "response_format": enum_field_schema(
-                                "Response Format",
-                                ["json", "text", "verbose_json", "srt", "vtt"],
-                                "json",
-                            ),
-                            "temperature": number_field_schema("Temperature", 0),
-                        },
-                        "required": ["audio_url"],
-                    }
-                }
-            },
-        }
-
-    utility_models = {
-        "prompt-concatenator": build_prompt_concatenator_schema()
-    }
-
-    return {
-        "categories": {
-            "image": {"models": image_models},
-            "audio": {"models": audio_models},
-            "text": {"models": text_models},
-            "utility": {"models": utility_models},
-        }
-    }
-
-    audio_models: dict[str, Any] = {
-        "audio-passthrough": passthrough_schema(
-            "audio_url", "audio", "Audio URL", "URL of input audio."
-        )
-    }
-    for item in discovered["tts"]:
-        model_id = item["id"]
-        info = await get_model_info(model_id)
-        properties = {
-            "input": field_schema(
-                "Text", "string", description="Text to speak.", name="input"
-            ),
-            "format": enum_field_schema("Format", ["mp3", "wav"], "mp3"),
-        }
-        voice_options = extract_voice_options(info)
-        if voice_options:
-            properties["voice"] = enum_field_schema(
-                "Voice", voice_options, voice_options[0]
-            )
-        audio_models[model_id] = {
-            **item,
-            "input_schema": {
-                "schemas": {
-                    "input_data": {
-                        "properties": properties,
-                        "required": ["input"],
-                    }
-                }
-            },
-        }
-
-    text_models: dict[str, Any] = {
-        "text-passthrough": {
-            "id": "text-passthrough",
-            "name": "Input Text",
-            "input_schema": {
-                "schemas": {
-                    "input_data": {
-                        "properties": {
-                            "prompt": field_schema(
-                                "Prompt",
-                                "string",
-                                description="Input text.",
-                                name="prompt",
-                            ),
-                        },
-                        "required": ["prompt"],
-                    }
-                }
-            },
-        }
-    }
-    for item in discovered["stt"]:
-        model_id = item["id"]
-        text_models[model_id] = {
-            **item,
-            "input_schema": {
-                "schemas": {
-                    "input_data": {
-                        "properties": {
-                            "audio_url": field_schema(
-                                "Audio URL",
-                                "string",
-                                field="audio",
-                                description="Audio URL to transcribe.",
-                                name="audio_url",
-                            ),
-                            "language": field_schema(
-                                "Language",
-                                "string",
-                                description="Optional language code, e.g. en or id.",
-                            ),
-                            "prompt": field_schema(
-                                "Prompt",
-                                "string",
-                                description="Optional hint text for transcription.",
-                            ),
-                            "response_format": enum_field_schema(
-                                "Response Format",
-                                ["json", "text", "verbose_json", "srt", "vtt"],
-                                "json",
-                            ),
-                            "temperature": number_field_schema("Temperature", 0),
-                        },
-                        "required": ["audio_url"],
-                    }
-                }
-            },
-        }
-
-    utility_models = {
-        "prompt-concatenator": build_prompt_concatenator_schema()
-    }
-
-    return {
-        "categories": {
-            "image": {"models": image_models},
-            "audio": {"models": audio_models},
-            "text": {"models": text_models},
-            "utility": {"models": utility_models},
-        }
-    }
 
 
 def extract_voice_options(info: dict[str, Any]) -> list[str]:
@@ -1998,10 +1731,6 @@ async def create_or_update_workflow(payload: dict):
     return {"workflow_id": workflow_id}
 
 
-async def get_node_schemas_helper(workflow_id: str):
-    return await build_node_schemas()
-
-
 async def get_api_node_schemas_helper(workflow_id: str):
     return {"models": {}}
 
@@ -2044,53 +1773,8 @@ async def update_workflow_name_helper(workflow_id: str, payload: dict):
     return {"workflow_id": workflow_id, "name": workflow["name"]}
 
 
-async def run_workflow_in_background(workflow_id: str, run_id: str):
-    store = load_workflows_store()
-    workflow = copy.deepcopy(store["workflows"].get(workflow_id))
-    if not workflow:
-        return
-    order = build_topological_order(workflow)
-    for node_id in order:
-        await run_single_node(workflow, node_id, run_id)
-
-
-async def run_workflow_helper(workflow_id: str, payload: dict):
-    workflow_id = normalize_workflow_id(workflow_id)
-    if not load_workflows_store()["workflows"].get(workflow_id):
-        raise HTTPException(status_code=404, detail="Workflow not found")
-    run_id = uuid.uuid4().hex
-    run_store = load_runs_store()
-    run_store["runs"][run_id] = {
-        "run_id": run_id,
-        "workflow_id": workflow_id,
-        "nodes": {},
-    }
-    save_runs_store(run_store)
-    asyncio.create_task(run_workflow_in_background(workflow_id, run_id))
-    return {"run_id": run_id}
-
-
 async def get_run_status_helper(run_id: str):
     return get_run_or_404(run_id)
-
-
-async def run_node_in_background(workflow_id: str, node_id: str, run_id: str):
-    workflow = copy.deepcopy(get_workflow_or_404(workflow_id))
-    await run_single_node(workflow, node_id, run_id)
-
-
-async def run_node_helper(workflow_id: str, node_id: str, payload: dict):
-    workflow_id = normalize_workflow_id(workflow_id)
-    run_id = payload.get("run_id") or uuid.uuid4().hex
-    run_store = load_runs_store()
-    run_store["runs"][run_id] = {
-        "run_id": run_id,
-        "workflow_id": workflow_id,
-        "nodes": {},
-    }
-    save_runs_store(run_store)
-    asyncio.create_task(run_node_in_background(workflow_id, node_id, run_id))
-    return {"run_id": run_id}
 
 
 async def publish_workflow_helper(workflow_id: str, payload: dict):

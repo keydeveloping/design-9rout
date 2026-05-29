@@ -7,7 +7,7 @@ const apiBaseUrl = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || "ht
 async function fetchWorkflowData(id, cookieHeader) {
   const baseUrl = `${apiBaseUrl}/api/workflow`;
   try {
-    const [workflowRes, schemasRes] = await Promise.all([
+    const [workflowResult, schemasResult] = await Promise.allSettled([
       fetch(`${baseUrl}/get-workflow-def/${id}`, {
         cache: 'no-store',
         headers: { 'Cookie': cookieHeader || '' }
@@ -18,8 +18,14 @@ async function fetchWorkflowData(id, cookieHeader) {
       })
     ]);
 
-    const initialWorkflowData = workflowRes.ok ? await workflowRes.json() : null;
-    const initialNodeSchemas = schemasRes.ok ? await schemasRes.json() : null;
+    const workflowRes = workflowResult.status === "fulfilled" ? workflowResult.value : null;
+    const schemasRes = schemasResult.status === "fulfilled" ? schemasResult.value : null;
+    const initialWorkflowData = workflowRes?.ok ? await workflowRes.json() : null;
+    const initialNodeSchemas = schemasRes?.ok ? await schemasRes.json() : null;
+
+    if (schemasResult.status === "rejected" || (schemasRes && !schemasRes.ok)) {
+      console.warn("Node schema fetch failed on server; client will retry.");
+    }
 
     return { initialWorkflowData, initialNodeSchemas };
   } catch (error) {

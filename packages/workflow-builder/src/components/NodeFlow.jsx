@@ -26,6 +26,9 @@ import { Toaster, toast } from "react-hot-toast";
 import { FiSun, FiMoon } from "react-icons/fi";
 import axios from "axios";
 import TextGeneration from "./TextNode";
+import RuntimeSettingsModal from "./RuntimeSettingsModal";
+import { runtimeApi, getErrorMessage, isRuntimeSettingsRequired } from "./runtimeApi";
+import { RUNTIME_SETTINGS_EVENT, getRuntimeSettings } from "./runtimeSettings";
 import ImageGeneration from "./ImageNode";
 import VideoGeneration from "./VideoNode";
 import { setWorkflowIds } from "./WorkflowStore";
@@ -486,6 +489,8 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
   const [categoryInput, setCategoryInput] = useState(initialState?.metadata?.category || "General");
   const [isCategoryPopupOpen, setIsCategoryPopupOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isRuntimeSettingsOpen, setIsRuntimeSettingsOpen] = useState(false);
+  const [runtimeSettings, setRuntimeSettings] = useState(() => getRuntimeSettings());
   const [isModelDropdownUp, setIsModelDropdownUp] = useState(false);
   const modelDropdownTriggerRef = useRef(null);
 
@@ -509,11 +514,34 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
 
   // Moved SPECIAL_MODEL_NAMES, formatName and getModelObj logic to static helpers above
 
+  const refreshNodeSchemas = useCallback(() => {
+    if (!id) return Promise.resolve(null);
+    return runtimeApi.get(`/api/workflow/${id}/node-schemas`)
+      .then(res => {
+        setNodeSchemas(res.data || {});
+        toast.success("Node schemas refreshed");
+        return res.data;
+      })
+      .catch(err => {
+        if (isRuntimeSettingsRequired(err)) setIsRuntimeSettingsOpen(true);
+        toast.error(getErrorMessage(err, "Failed to load node schemas"));
+        console.error("Failed to load node schemas", err);
+        return null;
+      });
+  }, [id]);
+
+  useEffect(() => {
+    const handleRuntimeSettingsChanged = (event) => {
+      setRuntimeSettings(event.detail || getRuntimeSettings());
+    };
+
+    window.addEventListener(RUNTIME_SETTINGS_EVENT, handleRuntimeSettingsChanged);
+    return () => window.removeEventListener(RUNTIME_SETTINGS_EVENT, handleRuntimeSettingsChanged);
+  }, []);
+
   useEffect(() => {
     if (!initialNodeSchemas) {
-      axios.get(`/api/workflow/${id}/node-schemas`)
-        .then(res => setNodeSchemas(res.data || {}))
-        .catch(err => console.error("Failed to load node schemas", err));
+      refreshNodeSchemas();
     }
 
     const handleMouseMove = (e) => {
@@ -522,7 +550,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
 
     window.addEventListener('mousemove', handleMouseMove);
     return () => window.removeEventListener('mousemove', handleMouseMove);
-  }, []);
+  }, [initialNodeSchemas, refreshNodeSchemas]);
 
   useLayoutEffect(() => {
     if (dropDown === 3 && modelDropdownTriggerRef.current) {
@@ -1567,11 +1595,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
       return response.data.workflow_id;
     } catch (error) {
       console.log(error);
-      if (error.response) {
-        toast.error(`Failed: ${error.response.data.detail || "Server error"}`);
-      } else {
-        toast.error(`Error: ${error.message}`);
-      }
+      toast.error(getErrorMessage(error, "Failed to save workflow"));
     }
   };
 
@@ -1587,11 +1611,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
     } catch (error) {
       console.log(error);
       setIsRunning(0);
-      if (error.response) {
-        toast.error(`Failed: ${error.response.data.detail || "Server error"}`);
-      } else {
-        toast.error(`Error: ${error.message}`);
-      }
+      toast.error(getErrorMessage(error, "Failed to duplicate workflow"));
     }
   };
 
@@ -1731,7 +1751,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
       setLoadingNodes({});
       const savedWorkflowId = await handleSaveWorkFlow();
 
-      const response = await axios.post(`/api/workflow/${workflowId}/run`, {
+      const response = await runtimeApi.post(`/api/workflow/${savedWorkflowId}/run`, {
         cost: totalWorkflowCost
       });
       console.log("run data:", response.data);
@@ -1741,11 +1761,8 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
       pollRunIdStatus(newRunId);
     } catch (error) {
       console.log(error);
-      if (error.response) {
-        toast.error(`Failed: ${error.response.data.detail || "Server error"}`);
-      } else {
-        toast.error(`Error: ${error.message}`);
-      }
+      if (isRuntimeSettingsRequired(error)) setIsRuntimeSettingsOpen(true);
+      toast.error(getErrorMessage(error, "Error running workflow"));
       setLoadingNodes({});
       setIsRunning(0);
     }
@@ -1892,6 +1909,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
       duplicateNode,
       setNodes,
       setEdges,
+      openRuntimeSettings: () => setIsRuntimeSettingsOpen(true),
       handleTypes: {
         ...(node.type === 'apiNode' ? Object.keys(node.data?.formValues || {}).reduce((acc, key) => ({ ...acc, [key]: 'white' }), {}) : {}),
         concatInput: "blue", concatInput4: "blue", concatImageInput: "green", concatOutput: "blue",
@@ -2470,6 +2488,22 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
             )}
             {interactionMode ? (
               <>
+                <button
+                  type="button"
+                  suppressHydrationWarning={true}
+                  onClick={() => setIsRuntimeSettingsOpen(true)}
+                  className={`flex items-center gap-2 px-4 py-1.5 border text-sm rounded-full cursor-pointer hover:bg-black hover:text-white ${runtimeSettings.baseUrl && runtimeSettings.apiKey ? "border-emerald-600/70 bg-emerald-500 text-white" : "border-gray-600/70 bg-white text-black"}`}
+                >
+                  <FaToolbox size={14} /> 9router
+                </button>
+                <button
+                  type="button"
+                  suppressHydrationWarning={true}
+                  onClick={refreshNodeSchemas}
+                  className="flex items-center gap-2 px-4 py-1.5 border border-gray-600/70 bg-white text-black text-sm rounded-full cursor-pointer hover:bg-black hover:text-white"
+                >
+                  Refresh Schemas
+                </button>
                 <button
                   type="button"
                   suppressHydrationWarning={true}
@@ -3166,6 +3200,14 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
           </div>
         </div>
       )}
+      <RuntimeSettingsModal
+        isOpen={isRuntimeSettingsOpen}
+        onClose={() => setIsRuntimeSettingsOpen(false)}
+        onSaved={(settings) => {
+          setRuntimeSettings(settings);
+          if (settings?.baseUrl && settings?.apiKey) refreshNodeSchemas();
+        }}
+      />
       <Toaster />
     </div>
   );

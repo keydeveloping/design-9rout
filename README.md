@@ -10,7 +10,7 @@ It provides a visual workflow editor, a FastAPI backend, and a 9router-compatibl
 - Image, video, audio, text, and utility workflow nodes
 - Prompt concatenation, array separator, and list item selector utilities
 - Self-hostable FastAPI backend
-- 9router-compatible model runtime via `NINEROUTER_URL`
+- 9router-compatible model runtime with browser-local URL/key overrides
 - Docker Compose support for local deployment
 
 ## Tech Stack
@@ -19,7 +19,7 @@ It provides a visual workflow editor, a FastAPI backend, and a 9router-compatibl
 - Workflow builder: React Flow shared package
 - Backend: FastAPI, Uvicorn
 - Runtime: 9router-compatible API
-- Package manager: npm workspaces
+- Package manager: pnpm workspaces
 - Containers: Docker Compose
 
 ## Project Structure
@@ -40,7 +40,7 @@ It provides a visual workflow editor, a FastAPI backend, and a 9router-compatibl
 ### Local Development
 
 - Node.js 20+
-- npm 7+
+- pnpm 9+
 - Python 3.10+
 - Running 9router endpoint
 
@@ -54,7 +54,7 @@ It provides a visual workflow editor, a FastAPI backend, and a 9router-compatibl
 
 ### Root `.env`
 
-Used by Docker Compose.
+Used by Docker Compose and backend-side runtime calls. Browser single-node runs do not read 9router URL/key from this file.
 
 ```bash
 cp .env.example .env
@@ -69,7 +69,7 @@ ALLOW_LOCAL_REFERENCE_IMAGES=true
 
 ### Backend `server/.env`
 
-Used when running the backend directly.
+Used when running the backend directly. Browser single-node runs do not fall back to these 9router values.
 
 ```bash
 cd server
@@ -87,8 +87,8 @@ ALLOW_LOCAL_REFERENCE_IMAGES=true
 
 | Variable | Description |
 |---|---|
-| `NINEROUTER_URL` | Base URL for the 9router-compatible runtime |
-| `NINEROUTER_KEY` | Optional auth key for runtime requests |
+| `NINEROUTER_URL` | Base URL for backend-initiated 9router requests |
+| `NINEROUTER_KEY` | Auth key for backend-initiated 9router requests |
 | `PUBLIC_BASE_URL` | Public/backend base URL used for local generated files |
 | `ALLOW_LOCAL_REFERENCE_IMAGES` | Allows local/private reference image URLs during local development |
 | `DATA_DIR` | Backend data directory; set by Docker to `/home/appuser/data` |
@@ -105,7 +105,7 @@ ALLOW_LOCAL_REFERENCE_IMAGES=true
 From repository root:
 
 ```bash
-npm install
+pnpm install
 ```
 
 ## Run Locally
@@ -135,13 +135,31 @@ API docs:
 From repository root:
 
 ```bash
-npm run dev:app
+pnpm dev:app
 ```
+
+### 3. Configure Browser-Local 9router Settings
+
+Single-node Run actions in browser send runtime overrides from localStorage key `9router.runtimeSettings`.
+Set it in DevTools console before using Run on individual nodes:
+
+```js
+localStorage.setItem("9router.runtimeSettings", JSON.stringify({
+  baseUrl: "http://localhost:20128",
+  apiKey: "your_9router_key_here"
+}));
+```
+
+Requests include:
+- `X-KeyWorkflow-Router-URL`
+- `X-KeyWorkflow-Router-Key`
+
+If browser-local settings are missing, single-node Run no longer falls back to `NINEROUTER_URL` or `NINEROUTER_KEY` env vars.
 
 Frontend:
 - `http://localhost:3000`
 
-### 3. Rebuild Workflow Builder After UI Changes
+### 4. Rebuild Workflow Builder After UI Changes
 
 If you change files under `packages/workflow-builder`, rebuild the shared package:
 
@@ -157,7 +175,7 @@ npm run build:lib
 cp .env.example .env
 ```
 
-Update runtime values in `.env`:
+Update backend runtime values in `.env` if Docker services themselves must call 9router:
 
 ```env
 NINEROUTER_URL=http://host.docker.internal:20128
@@ -188,21 +206,21 @@ Services:
 docker compose down
 ```
 
-## npm Scripts
+## pnpm Scripts
 
 From repository root:
 
 ```bash
-npm run dev:app       # Start Next.js frontend
-npm run build:app     # Build Next.js frontend
-npm run build:lib     # Build workflow-builder package
-npm run install:all   # Install workspace dependencies
+pnpm dev:app          # Start Next.js frontend
+pnpm build:app        # Build Next.js frontend
+pnpm build:lib        # Build workflow-builder package
+pnpm install:all      # Install workspace dependencies
 ```
 
 ## Development Notes
 
 - Workflow editor components live in `packages/workflow-builder/src/components`.
-- Rebuild `workflow-builder` after editor changes with `npm run build:lib`.
+- Rebuild `workflow-builder` after editor changes with `pnpm build:lib`.
 - Runtime/generated backend data lives under `DATA_DIR`.
 - Do not commit `server/data/` or local secrets.
 - For local image-reference workflows, keep `ALLOW_LOCAL_REFERENCE_IMAGES=true`.

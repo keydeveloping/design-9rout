@@ -4,6 +4,7 @@ import { IoVideocamOutline, IoTrashOutline, IoPlay, IoPause, IoVolumeHigh, IoVol
 import { Handle, Position, useReactFlow, useStore, useUpdateNodeInternals } from "reactflow";
 import { getRunId, getWorkflowId } from "./WorkflowStore";
 import axios from "axios";
+import { runtimeApi, getErrorMessage } from "./runtimeApi";
 import { toast } from "react-hot-toast";
 import NodeSendButton from "./NodeSendButton";
 import { FaAngleLeft, FaAngleRight, FaAngleDown } from "react-icons/fa6";
@@ -264,7 +265,7 @@ const VideoCombiner = ({ id, data, selected }) => {
         }
       }
 
-      const response = await axios.post(`/api/workflow/${workflow_id}/node/${id}/run`, {
+      const response = await runtimeApi.post(`/api/workflow/${workflow_id}/node/${id}/run`, {
         run_id: runId,
         model: selectedModel.id,
         params: params,
@@ -274,7 +275,7 @@ const VideoCombiner = ({ id, data, selected }) => {
       pollNodeStatus(response.data.run_id);
     } catch(error) {
       data.onDataChange(id, { isLoading: false });
-      toast.error(error.response?.data?.detail || "Error running node");
+      toast.error(getErrorMessage(error, "Error running node"));
       console.error(error);
     };
   };
