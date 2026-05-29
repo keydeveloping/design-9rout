@@ -9,7 +9,9 @@ RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY client/package.json ./client/package.json
 COPY packages/workflow-builder/package.json ./packages/workflow-builder/package.json
-RUN pnpm config set minimumReleaseAge 0 && pnpm install --frozen-lockfile
+RUN pnpm config set minimumReleaseAge 0 \
+    && pnpm config set onlyBuiltDependencies sharp,unrs-resolver \
+    && pnpm install --frozen-lockfile
 
 FROM deps AS builder
 COPY packages/workflow-builder ./packages/workflow-builder
