@@ -361,7 +361,7 @@ const getModelObjStatic = (category, modelId, nodeSchemas) => {
 };
 
 const processWorkflowData = (workflowData, nodeSchemas, id) => {
-  if (!workflowData || !nodeSchemas?.categories) return null;
+  if (!workflowData) return null;
 
   const workflow = workflowData?.data;
   if (!workflow?.nodes) return null;
@@ -378,7 +378,10 @@ const processWorkflowData = (workflowData, nodeSchemas, id) => {
     data: {
       nodeSchemas,
       modelId: n.model,
-      selectedModel: getModelObjStatic(n.category, n.model, nodeSchemas),
+      selectedModel: getModelObjStatic(n.category, n.model, nodeSchemas) || {
+        id: n.model,
+        name: SPECIAL_MODEL_NAMES[n.model] || formatName(n.model),
+      },
       outputs: n.output_params?.outputs || [],
       resultUrl: n.output_params?.resultUrl || null,
       formValues: n.input_params || {},
@@ -422,10 +425,6 @@ const getRouteWorkflowId = (params, initialWorkflowData) => {
   }
   if (initialWorkflowData?.workflow_id) return initialWorkflowData.workflow_id;
   if (initialWorkflowData?.id) return initialWorkflowData.id;
-  if (typeof window !== "undefined") {
-    const match = window.location.pathname.match(/\/workflow\/([^/?#]+)/);
-    if (match?.[1]) return decodeURIComponent(match[1]);
-  }
   return null;
 };
 
@@ -596,7 +595,10 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
       data: {
         nodeSchemas,
         modelId: n.model,
-        selectedModel: getModelObj(n.category, n.model),
+        selectedModel: getModelObj(n.category, n.model) || {
+          id: n.model,
+          name: SPECIAL_MODEL_NAMES[n.model] || formatName(n.model),
+        },
         outputs: n.output_params?.outputs || [],
         resultUrl: n.output_params?.resultUrl || null,
         formValues: n.input_params || {},
@@ -631,11 +633,19 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
   }, [id, nodeSchemas, getModelObj, setNodes, setEdges]);
 
   useEffect(() => {
-    if (initialWorkflowData && nodeSchemas?.categories) {
+    if (initialState && !isRestoring) {
       return;
     }
 
-    if (!id || !nodeSchemas?.categories) return;
+    if (initialState) {
+      setIsRestoring(false);
+      return;
+    }
+
+    if (!id) {
+      setIsRestoring(false);
+      return;
+    }
 
     axios.get(`/api/workflow/get-workflow-def/${id}`)
       .then(res => {
@@ -646,7 +656,7 @@ const NodeFlow = ({ initialNodeSchemas, initialWorkflowData }) => {
         setInteractionMode(false);
         setIsRestoring(false);
       });
-  }, [id, nodeSchemas, initialWorkflowData, restoreWorkflow]);
+  }, [id, initialState, isRestoring, restoreWorkflow]);
 
   useEffect(() => {
     if (isRestoring) return;

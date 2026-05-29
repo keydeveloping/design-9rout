@@ -1,0 +1,50 @@
+{$APP_DOMAIN} {
+    encode zstd gzip
+
+    @api path /api/*
+    handle @api {
+        reverse_proxy server:8000 {
+            header_up Host {host}
+            header_up X-Forwarded-Host {host}
+            header_up X-Forwarded-Proto {scheme}
+            header_up X-Forwarded-For {remote_host}
+        }
+    }
+
+    @generated path /generated/*
+    handle @generated {
+        reverse_proxy server:8000 {
+            header_up Host {host}
+            header_up X-Forwarded-Host {host}
+            header_up X-Forwarded-Proto {scheme}
+            header_up X-Forwarded-For {remote_host}
+        }
+    }
+
+    handle {
+        reverse_proxy client:3000 {
+            header_up Host {host}
+            header_up X-Forwarded-Host {host}
+            header_up X-Forwarded-Proto {scheme}
+            header_up X-Forwarded-For {remote_host}
+        }
+    }
+}
+
+{$MINIO_API_DOMAIN} {
+    reverse_proxy minio:9000 {
+        header_up Host {host}
+        header_up X-Forwarded-Host {host}
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-For {remote_host}
+    }
+}
+
+{$MINIO_CONSOLE_DOMAIN} {
+    reverse_proxy minio:9001 {
+        header_up Host {host}
+        header_up X-Forwarded-Host {host}
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-For {remote_host}
+    }
+}

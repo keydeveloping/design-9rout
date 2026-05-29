@@ -1,20 +1,17 @@
 import React from 'react';
-import { cookies } from "next/headers";
 import WorkflowBuilderClient from "./WorkflowBuilderClient";
 
 const apiBaseUrl = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-async function fetchWorkflowData(id, cookieHeader) {
+async function fetchWorkflowData(id) {
   const baseUrl = `${apiBaseUrl}/api/workflow`;
   try {
     const [workflowResult, schemasResult] = await Promise.allSettled([
       fetch(`${baseUrl}/get-workflow-def/${id}`, {
-        cache: 'no-store',
-        headers: { 'Cookie': cookieHeader || '' }
+        cache: 'no-store'
       }),
       fetch(`${baseUrl}/${id}/node-schemas`, {
-        cache: 'no-store',
-        headers: { 'Cookie': cookieHeader || '' }
+        cache: 'no-store'
       })
     ]);
 
@@ -36,10 +33,8 @@ async function fetchWorkflowData(id, cookieHeader) {
 
 export default async function WorkflowPage({ params }) {
   const { id } = await params;
-  const cookieStore = await cookies();
-  const cookieHeader = cookieStore.toString();
 
-  const { initialWorkflowData, initialNodeSchemas } = await fetchWorkflowData(id, cookieHeader);
+  const { initialWorkflowData, initialNodeSchemas } = await fetchWorkflowData(id);
 
   return (
     <div className="h-dvh w-full bg-black">
