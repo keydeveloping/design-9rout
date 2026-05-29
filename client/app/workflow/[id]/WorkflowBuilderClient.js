@@ -7,9 +7,9 @@ import "workflow-builder/dist/tailwind.css";
 
 const WorkflowBuilderClient = ({ initialWorkflowData, initialNodeSchemas }) => {
   return (
-    <WorkflowBuilder 
-      initialWorkflowData={initialWorkflowData} 
-      initialNodeSchemas={initialNodeSchemas} 
+    <WorkflowBuilder
+      initialWorkflowData={initialWorkflowData}
+      initialNodeSchemas={initialNodeSchemas}
     />
   )
 }

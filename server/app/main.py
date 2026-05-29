@@ -10,7 +10,7 @@ load_dotenv(dotenv_path=env_path)
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from .routers import workflow_router, app_router
+from .routers import workflow_router, app_router, settings_router
 
 app = FastAPI(title="Workflow API", version="1.0.0")
 
@@ -21,11 +21,17 @@ app.mount("/generated", StaticFiles(directory=static_dir), name="generated")
 
 app.include_router(workflow_router.router, prefix="/api/workflow", tags=["workflow"])
 app.include_router(app_router.router, prefix="/api/app", tags=["app"])
+app.include_router(settings_router.router, prefix="/api/settings", tags=["settings"])
 
 # Configure CORS
+public_base_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+allowed_origins = ["http://localhost:3000"]
+if public_base_url and public_base_url not in allowed_origins:
+    allowed_origins.append(public_base_url)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Next.js default port
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

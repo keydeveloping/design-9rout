@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Handle, Position, useReactFlow, useStore, useUpdateNodeInternals } from "reactflow";
 import axios from "axios";
+import { runtimeApi, getErrorMessage } from "./runtimeApi";
 import { FaAngleLeft, FaAngleRight } from "react-icons/fa6";
 import { IoTrashOutline } from "react-icons/io5";
 import { RiPlayLargeFill } from "react-icons/ri";
@@ -173,7 +174,7 @@ const ArraySeparator = ({ id, data, selected }) => {
       for (const [key, meta] of Object.entries(modelSchema.properties)) {
         params[key] = Object.prototype.hasOwnProperty.call(formValues, key) ? formValues[key] : meta.default ?? null;
       }
-      const response = await axios.post(`/api/workflow/${workflow_id}/node/${id}/run`, {
+      const response = await runtimeApi.post(`/api/workflow/${workflow_id}/node/${id}/run`, {
         run_id: runId || undefined,
         model: selectedModel.id,
         params,
@@ -183,7 +184,7 @@ const ArraySeparator = ({ id, data, selected }) => {
       pollNodeStatus(response.data.run_id);
     } catch (error) {
       data.onDataChange(id, { isLoading: false });
-      toast.error(error.response?.data?.detail || "Error running separator");
+      toast.error(getErrorMessage(error, "Error running separator"));
     }
   };
 

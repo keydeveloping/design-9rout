@@ -1,31 +1,8 @@
 import React from "react";
-import { cookies } from "next/headers";
 import WorkflowListingClient from "./WorkflowListingClient";
 
-const apiBaseUrl = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-
-async function getWorkflowDefs(cookieHeader) {
-  const endpoint = `${apiBaseUrl}/api/workflow/get-workflow-defs`;
-  try {
-    const res = await fetch(endpoint, {
-      cache: 'no-store',
-      headers: {
-        'Cookie': cookieHeader || '',
-      },
-    });
-
-    if (!res.ok) return [];
-    return await res.json();
-  } catch (error) {
-    console.error("Error fetching workflows on server:", error);
-    return [];
-  }
-}
-
 const WorkflowList = async () => {
-  const cookieStore = await cookies();
-  const cookieHeader = cookieStore.toString();
-  const initialWorkflowList = await getWorkflowDefs(cookieHeader);
+  const initialWorkflowList = [];
 
   return (
     <div className="relative min-h-screen w-full bg-[#030303] text-white overflow-x-hidden selection:bg-blue-500/30">

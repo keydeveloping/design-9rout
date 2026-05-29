@@ -1,4 +1,28 @@
 services:
+  caddy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+      MINIO_API_DOMAIN: ${MINIO_API_DOMAIN}
+      MINIO_CONSOLE_DOMAIN: ${MINIO_CONSOLE_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      client:
+        condition: service_healthy
+      server:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    networks:
+      - app-network
+
   client:
     build:
       context: .
@@ -6,8 +30,6 @@ services:
       args:
         API_URL: http://server:8000
     restart: unless-stopped
-    ports:
-      - "3000:3000"
     environment:
       NODE_ENV: production
       API_URL: http://server:8000
@@ -28,22 +50,20 @@ services:
       context: ./server
       dockerfile: Dockerfile
     restart: unless-stopped
-    ports:
-      - "8000:8000"
     environment:
       NINEROUTER_URL: ${NINEROUTER_URL:-}
       NINEROUTER_KEY: ${NINEROUTER_KEY:-}
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://127.0.0.1:8000}
-      ALLOW_LOCAL_REFERENCE_IMAGES: ${ALLOW_LOCAL_REFERENCE_IMAGES:-true}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+      ALLOW_LOCAL_REFERENCE_IMAGES: ${ALLOW_LOCAL_REFERENCE_IMAGES:-false}
       DATA_DIR: /home/appuser/data
       STORAGE_BACKEND: ${STORAGE_BACKEND:-minio}
-      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://minio:9000}
-      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-minioadmin}
-      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-minioadmin}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
       S3_BUCKET: ${S3_BUCKET:-keyworkflow}
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
-      S3_CREATE_BUCKET: ${S3_CREATE_BUCKET:-true}
+      S3_CREATE_BUCKET: ${S3_CREATE_BUCKET:-false}
       S3_PRESIGNED_EXPIRES_SECONDS: ${S3_PRESIGNED_EXPIRES_SECONDS:-604800}
     volumes:
       - ./server/data:/home/appuser/data
@@ -66,15 +86,16 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-minioadmin}
-    ports:
-      - "9000:9000"
-      - "9001:9001"
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY}
     volumes:
       - ./data:/data
     networks:
       - app-network
+
+volumes:
+  caddy-data:
+  caddy-config:
 
 networks:
   app-network:
